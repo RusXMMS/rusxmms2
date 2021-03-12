@@ -1,0 +1,38 @@
+It is highly recommended to apply all attached patches to libtranslate. They 
+are fixing several serious bugs and providing better support of various
+translation services. Additionaly, it is highly recommended to obtain latest
+valid service description file (services.xml) from http://RusXMMS.sf.net.
+
+*** IMPORTANT ***
+Please, not you should apply "libtranslate-ds-fixcharset.patch" patch after
+"libtranslate-ds-timed.patch" otherwise the process would fail.
+
+
+Official Patches
+================
+charsetparse:	Patch fixing HTTP charset parsing
+condfix:	Patch fixing occasional translate_session_translate_text() 
+		lockup 
+
+DarkSoft Patches
+================
+memory:		Fixes memory exhaustion on 64bit platforms.
+empty:		Fixes segmentation in the case if the Web Server closes 
+		connection prior to sending any data.
+promt:		Allows "entities" keyword to send ISO8859-1 source text in the
+		HTML Entities encoding as required by translate.ru service
+		(Look usage example in services.xml)
+fixcharset:	This patch enables support for translation services returning
+		wrong charset in Content-Type header (pereklad.ua for example).
+		The "response-charset" attribute could be used to declare 
+		correct charset.
+		(Look usage example in services.xml)
+timed: 		Provides time limited translation API functions.
+
+
+
+Configuration
+=============
+services.xml	Example services.xml including translate.ru and pereklad.ua
+		services. This is an example only. Please, find the latest
+		version of the service.xml on the http://rusxmms.sf.net

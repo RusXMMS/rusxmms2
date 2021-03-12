@@ -1,0 +1,5 @@
+[xmms]
+playlist_font=-misc-ar pl shanheisun uni-medium-r-normal-*-14-*-*-*-p-*-iso10646-1
+use_fontsets=TRUE
+mainwin_use_xfont=TRUE
+mainwin_font=-misc-ar pl shanheisun uni-medium-r-normal-*-14-*-*-*-p-*-iso10646-1

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+	sed -i \
+		-e "s:-O3:\${CFLAGS}:" \
+		-e "s:CC=gcc :CC=\"gcc -DRCC_LAZY=1\":" \
+		-e "s:LD=gcc :LD=\"gcc \${LDFLAGS} -ldl\" :" \
+		-e "s:-O :\${CFLAGS} :" \
+		-e "s:LF2 = -s:LF2 = :" \
+		unix/Makefile \

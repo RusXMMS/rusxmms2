@@ -1,0 +1,201 @@
+diff -dPNur xmms-1.2.11/Input/mpg123/common.c xmms-1.2.11-new/Input/mpg123/common.c
+--- xmms-1.2.11/Input/mpg123/common.c	2005-05-15 02:01:19.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/common.c	2007-11-24 23:52:01.000000000 +0100
+@@ -148,19 +148,34 @@
+ int mpg123_stream_jump_to_frame(struct frame *fr, int frame)
+ {
+ 	if (!filept)
+-		return -1;
+-	mpg123_read_frame_init();
+-	fseek(filept, frame * (fr->framesize + 4), SEEK_SET);
+-	mpg123_read_frame(fr);
++	{
++		unsigned long r;
++
++		r = frame * (fr->framesize + 4);
++		mpg123_stream_close();
++		mpg123_open_stream(mpg123_filename, -1, r);
++	}
++	else
++	{
++		mpg123_read_frame_init();
++		fseek(filept, frame * (fr->framesize + 4), SEEK_SET);
++		mpg123_read_frame(fr);
++	}
+ 	return 0;
+ }
+ 
+ int mpg123_stream_jump_to_byte(struct frame *fr, int byte)
+ {
+ 	if (!filept)
+-		return -1;
+-	fseek(filept, byte, SEEK_SET);
+-	mpg123_read_frame(fr);
++	{
++		mpg123_stream_close();
++		mpg123_open_stream(mpg123_filename, -1, (unsigned long)byte);
++	}
++	else
++	{
++		fseek(filept, byte, SEEK_SET);
++		mpg123_read_frame(fr);
++	}
+ 	return 0;
+ }
+ 
+@@ -446,14 +461,14 @@
+ 	return 1;
+ }
+ 
+-void mpg123_open_stream(char *bs_filenam, int fd)
++void mpg123_open_stream(char *bs_filenam, int fd, unsigned long range)
+ {
+ 	filept_opened = 1;
+ 	if (!strncasecmp(bs_filenam, "http://", 7))
+ 	{
+ 		filept = NULL;
+-		mpg123_http_open(bs_filenam);
+ 		mpg123_info->filesize = 0;
++		mpg123_http_open(bs_filenam, range);
+ 		mpg123_info->network_stream = TRUE;
+ 	}
+ 	else
+diff -dPNur xmms-1.2.11/Input/mpg123/http.c xmms-1.2.11-new/Input/mpg123/http.c
+--- xmms-1.2.11/Input/mpg123/http.c	2007-11-16 22:51:24.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/http.c	2007-11-24 23:52:01.000000000 +0100
+@@ -50,6 +50,7 @@
+ extern gboolean mpg123_stereo;
+ 
+ static gboolean prebuffering, going, eof = FALSE;
++static unsigned long range;
+ static gint sock, rd_index, wr_index, buffer_length, prebuffer_length;
+ static guint64 buffer_read = 0;
+ static gchar *buffer;
+@@ -326,7 +327,7 @@
+ static void *http_buffer_loop(void *arg)
+ {
+ 	gchar line[1024], *user, *pass, *host, *filename,
+-	     *status, *url, *temp, *file;
++	     *status, *url, *temp, *temp2, *file;
+ 	gchar *chost;
+ 	gint cnt, written, error, port, cport;
+ 	socklen_t err_len;
+@@ -495,15 +496,22 @@
+ 				}
+ 				else
+ 					file = g_strconcat("/", filename, NULL);
+-				temp = g_strdup_printf("GET %s HTTP/1.0\r\n"
++				if (range)
++				{
++					temp2 = g_strdup_printf("Range: bytes=%lu-\r\n", range);
++				} else
++					temp2 = NULL;
++				temp = g_strdup_printf("GET %s HTTP/1.1\r\n"
+ 						       "Host: %s\r\n"
+ 						       "User-Agent: %s/%s\r\n"
+-						       "%s%s%s%s\r\n",
++						       "%s%s%s%s%s\r\n",
+ 						       file, host, PACKAGE, VERSION, 
+ 						       proxy_auth ? proxy_auth : "", auth ? auth : "",
+ 						       mpg123_cfg.cast_title_streaming ? "Icy-MetaData:1\r\n" : "",
+-						       mpg123_cfg.use_udp_channel ? udpspace : "");
+-				
++						       mpg123_cfg.use_udp_channel ? udpspace : "",
++						       range ? temp2 : "");
++
++				g_free(temp2);
+ 				g_free(file);
+ 				if(proxy_auth)
+ 					g_free(proxy_auth);
+@@ -587,7 +595,9 @@
+ #endif
+ /*  								udp_serverport = atoi (line + 20); */
+ 							}
+-							
++							if (!strncasecmp(line, "content-length:", 15)) {
++								mpg123_info->filesize = atoi(line + 15);
++							}
+ 						}
+ 						else
+ 						{
+@@ -719,7 +729,7 @@
+ 	pthread_exit(NULL);
+ }
+ 
+-int mpg123_http_open(gchar * _url)
++int mpg123_http_open(gchar * _url, unsigned long rng)
+ {
+ 	gchar *url;
+ 
+@@ -735,6 +745,7 @@
+ 	going = TRUE;
+ 	eof = FALSE;
+ 	buffer = g_malloc(buffer_length);
++	range = rng;
+ 
+ 	pthread_create(&thread, NULL, http_buffer_loop, url);
+ 
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2006-07-25 05:18:51.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-24 23:52:01.000000000 +0100
+@@ -857,7 +857,7 @@
+ 
+ 	mpg123_read_frame_init();
+ 
+-	mpg123_open_stream(filename, -1);
++	mpg123_open_stream(filename, -1, 0);
+ 	if (mpg123_info->eof || !mpg123_read_frame(&fr))
+ 		mpg123_info->eof = TRUE;
+ 	if (!mpg123_info->eof && mpg123_info->going)
+@@ -906,7 +906,7 @@
+ 				break;
+ 		}
+ 
+-		if (!have_xing_header && strncasecmp(filename, "http://", 7))
++		if(!have_xing_header && mpg123_info->filesize != 0)
+ 			mpg123_info->num_frames = mpg123_calc_numframes(&fr);
+ 
+ 		memcpy(&fr, &temp_fr, sizeof(struct frame));
+@@ -918,11 +918,10 @@
+ 		mpg123_lsf = fr.lsf;
+ 		mpg123_mpeg25 = fr.mpeg25;
+ 		mpg123_mode = fr.mode;
+-
++		mpg123_length = mpg123_info->num_frames * mpg123_info->tpf * 1000;
++		
+ 		if (strncasecmp(filename, "http://", 7))
+ 		{
+-			mpg123_length =
+-				mpg123_info->num_frames * mpg123_info->tpf * 1000;
+ 			if (!mpg123_title)
+ 				mpg123_title = get_song_title(NULL,filename);
+ 		}
+@@ -930,7 +929,6 @@
+ 		{
+ 			if (!mpg123_title)
+ 				mpg123_title = mpg123_http_get_title(filename);
+-			mpg123_length = -1;
+ 		}
+ 		mpg123_ip.set_info(mpg123_title, mpg123_length,
+ 				   mpg123_bitrate * 1000,
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.h xmms-1.2.11-new/Input/mpg123/mpg123.h
+--- xmms-1.2.11/Input/mpg123/mpg123.h	2006-07-24 00:32:44.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/mpg123.h	2007-11-24 23:52:01.000000000 +0100
+@@ -176,7 +176,7 @@
+ 
+ /* ------ Declarations from "http.c" ------ */
+ 
+-extern int mpg123_http_open(char *url);
++extern int mpg123_http_open(char *url, unsigned long rng);
+ int mpg123_http_read(gpointer data, gint length);
+ void mpg123_http_close(void);
+ char *mpg123_http_get_title(char * url);
+@@ -188,7 +188,7 @@
+ extern unsigned int mpg123_getbits(int);
+ extern unsigned int mpg123_getbits_fast(int);
+ 
+-extern void mpg123_open_stream(char *bs_filenam, int fd);
++extern void mpg123_open_stream(char *bs_filenam, int fd, unsigned long range);
+ extern int mpg123_head_check(unsigned long);
+ extern void mpg123_stream_close(void);
+ 

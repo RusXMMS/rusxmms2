@@ -1,0 +1,1 @@
+This patch adds BIG5 encoding detection into the Chinese detection engine.

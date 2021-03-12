@@ -1,0 +1,224 @@
+diff -dPNur gst-plugins-good-0.10.16/configure.ac gst-plugins-good-0.10.16-ds/configure.ac
+--- gst-plugins-good-0.10.16/configure.ac	2009-08-29 00:05:24.000000000 +0400
++++ gst-plugins-good-0.10.16-ds/configure.ac	2009-10-29 06:20:29.000000000 +0300
+@@ -939,6 +939,13 @@
+   AC_SUBST(BZ2_LIBS)
+ ])
+ 
++dnl *** id3demux to use LibRCC
++translit(dnm, m, l) AM_CONDITIONAL(USE_LIBRCC, true)
++AG_GST_CHECK_FEATURE(LIBRCC, [librcc support for id3demux],, [
++  AG_GST_CHECK_LIBHEADER(LIBRCC, rcc, rccInit, ,librcc.h, LIBRCC_LIBS="-lrcc")
++  AC_SUBST(LIBRCC_LIBS)
++])
++
+ else
+ 
+ dnl not building plugins with external dependencies,
+@@ -974,6 +981,7 @@
+ AM_CONDITIONAL(USE_XSHM, false)
+ AM_CONDITIONAL(USE_XVIDEO, false)
+ AM_CONDITIONAL(USE_ZLIB, false)
++AM_CONDITIONAL(USE_LIBRCC, false)
+ 
+ fi dnl of EXT plugins
+ 
+diff -dPNur gst-plugins-good-0.10.16/gst/id3demux/gstid3demux.c gst-plugins-good-0.10.16-ds/gst/id3demux/gstid3demux.c
+--- gst-plugins-good-0.10.16/gst/id3demux/gstid3demux.c	2009-08-11 02:15:55.000000000 +0400
++++ gst-plugins-good-0.10.16-ds/gst/id3demux/gstid3demux.c	2009-10-29 06:44:25.000000000 +0300
+@@ -56,6 +56,7 @@
+ 
+ #include "gstid3demux.h"
+ #include "id3tags.h"
++#include "rccpatch.h"
+ 
+ static const GstElementDetails gst_id3demux_details =
+ GST_ELEMENT_DETAILS ("ID3 tag demuxer",
+@@ -107,11 +108,22 @@
+ }
+ 
+ static void
++gst_id3demux_finalize (GObject * object)
++{
++  GstID3Demux *demux = GST_ID3DEMUX (object);
++
++  rcc_patch_unref();
++  
++  G_OBJECT_CLASS (parent_class)->finalize (object);
++}
++
++static void
+ gst_id3demux_class_init (GstID3DemuxClass * klass)
+ {
+   GstTagDemuxClass *tagdemux_class = (GstTagDemuxClass *) klass;
+   GObjectClass *gobject_class = (GObjectClass *) klass;
+ 
++  gobject_class->finalize = gst_id3demux_finalize;
+   gobject_class->set_property = gst_id3demux_set_property;
+   gobject_class->get_property = gst_id3demux_get_property;
+ 
+@@ -133,6 +145,7 @@
+ gst_id3demux_init (GstID3Demux * id3demux, GstID3DemuxClass * klass)
+ {
+   id3demux->prefer_v1 = DEFAULT_PREFER_V1;
++  rcc_patch_ref();
+ }
+ 
+ static gboolean
+diff -dPNur gst-plugins-good-0.10.16/gst/id3demux/id3v2frames.c gst-plugins-good-0.10.16-ds/gst/id3demux/id3v2frames.c
+--- gst-plugins-good-0.10.16/gst/id3demux/id3v2frames.c	2009-08-11 02:15:55.000000000 +0400
++++ gst-plugins-good-0.10.16-ds/gst/id3demux/id3v2frames.c	2009-10-29 06:40:17.000000000 +0300
+@@ -33,6 +33,7 @@
+ #endif
+ 
+ #include "id3tags.h"
++#include "rccpatch.h"
+ 
+ GST_DEBUG_CATEGORY_EXTERN (id3demux_debug);
+ #define GST_CAT_DEFAULT (id3demux_debug)
+@@ -986,7 +987,12 @@
+         utf8 = NULL;
+       }
+     }
+-  }
++  } 
++
++  /* Try LibRCC library to detect encoding */
++  utf8 = rcc_patch_to_utf8(start, size);
++  if (utf8) goto beach;
++  
+   /* Try current locale (if not UTF-8) */
+   if (!g_get_charset (&env)) {
+     if ((utf8 = g_locale_to_utf8 (start, size, &bytes_read, NULL, NULL))) {
+diff -dPNur gst-plugins-good-0.10.16/gst/id3demux/Makefile.am gst-plugins-good-0.10.16-ds/gst/id3demux/Makefile.am
+--- gst-plugins-good-0.10.16/gst/id3demux/Makefile.am	2009-08-11 02:15:55.000000000 +0400
++++ gst-plugins-good-0.10.16-ds/gst/id3demux/Makefile.am	2009-10-29 06:20:06.000000000 +0300
+@@ -1,10 +1,15 @@
+ plugin_LTLIBRARIES = libgstid3demux.la
+ 
+-libgstid3demux_la_SOURCES = gstid3demux.c id3tags.c id3v2frames.c
++libgstid3demux_la_SOURCES = gstid3demux.c id3tags.c id3v2frames.c rccpatch.c
+ libgstid3demux_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) $(GST_CFLAGS) 
+ libgstid3demux_la_LIBADD = $(GST_PLUGINS_BASE_LIBS) -lgsttag-@GST_MAJORMINOR@ \
+ 	-lgstpbutils-@GST_MAJORMINOR@ $(GST_BASE_LIBS) $(ZLIB_LIBS)
+ libgstid3demux_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
+ libgstid3demux_la_LIBTOOLFLAGS = --tag=disable-static
+ 
+-noinst_HEADERS = gstid3demux.h id3tags.h
++if USE_LIBRCC
++    libgstid3demux_la_LIBADD +=  @LIBRCC_LIBS@
++endif
++
++
++noinst_HEADERS = gstid3demux.h id3tags.h rccpatch.h
+diff -dPNur gst-plugins-good-0.10.16/gst/id3demux/rccpatch.c gst-plugins-good-0.10.16-ds/gst/id3demux/rccpatch.c
+--- gst-plugins-good-0.10.16/gst/id3demux/rccpatch.c	1970-01-01 03:00:00.000000000 +0300
++++ gst-plugins-good-0.10.16-ds/gst/id3demux/rccpatch.c	2009-10-29 07:05:20.000000000 +0300
+@@ -0,0 +1,91 @@
++#ifdef HAVE_CONFIG_H 
++#include "config.h" 
++#endif 
++
++#include <stdlib.h>
++#include "rccpatch.h"
++
++#ifdef HAVE_LIBRCC
++# include <librcc.h>
++#endif /* HAVE_LIBRCC */
++
++
++#ifdef HAVE_LIBRCC
++# define ID3_CLASS 0
++# define ID3V2_CLASS 1
++# define UTF_CLASS 2
++# define OUT_CLASS 3
++static rcc_class classes[] = {
++    { "id3", RCC_CLASS_STANDARD, NULL, NULL, "ID3 Encoding", 0 },
++    { "id3v2", RCC_CLASS_STANDARD, "id3", NULL, "ID3 v.2 Encoding", 0 },
++    { "utf", RCC_CLASS_KNOWN, "UTF-8", NULL, "Unicode Encoding", 0},
++    { "out", RCC_CLASS_TRANSLATE_LOCALE, "LC_CTYPE", NULL, "Output Encoding", 0 },
++    { NULL, RCC_CLASS_STANDARD, NULL, NULL, NULL, 0 }
++};
++
++static int rcc_initialized = 0;
++
++static rcc_context ctx = NULL;
++#endif /* HAVE_LIBRCC */
++
++
++static void rcc_patch_free() {
++#ifdef HAVE_LIBRCC
++    if (rcc_initialized) {
++	puts("clean");
++       rccFree();
++       rcc_initialized = 0;
++    }
++#endif /* HAVE_LIBRCC */
++}
++
++static void rcc_patch_init() {
++#ifdef HAVE_LIBRCC
++    if (rcc_initialized) return;
++    puts("init");
++    rccInit();
++    rccInitDefaultContext(NULL, 0, 0, classes, 0);
++    rccLoad(NULL, "xmms");
++    rccInitDb4(NULL, NULL, 0);
++    rcc_initialized = 1;
++#endif /* HAVE_LIBRCC */
++}
++
++static int registered = 0;
++static int ref_count = 0;
++static GStaticMutex lock = G_STATIC_MUTEX_INIT;
++
++void rcc_patch_ref() {
++    puts("ref");
++    g_static_mutex_lock(&lock);
++    if (!registered) {
++	g_atexit(rcc_patch_free);
++	registered = 1;
++    }
++    if (++ref_count==1) rcc_patch_init();
++    g_static_mutex_unlock(&lock);
++}
++
++void rcc_patch_unref() {
++    puts("unref");
++    g_static_mutex_lock(&lock);
++    if (--ref_count==0) rcc_patch_free();
++    g_static_mutex_unlock(&lock);
++}
++
++gchar *rcc_patch_to_utf8(const gchar *str, const guint size) {
++#ifdef HAVE_LIBRCC
++    gchar *res;
++
++    if (rcc_initialized) {
++	g_static_mutex_lock(&lock);
++	res = rccSizedRecode(ctx, ID3_CLASS, UTF_CLASS, str, size, NULL);
++	g_static_mutex_unlock(&lock);
++
++	return res;
++    }
++#endif /* HAVE_LIBRCC */
++
++    return  NULL;
++}
++
+diff -dPNur gst-plugins-good-0.10.16/gst/id3demux/rccpatch.h gst-plugins-good-0.10.16-ds/gst/id3demux/rccpatch.h
+--- gst-plugins-good-0.10.16/gst/id3demux/rccpatch.h	1970-01-01 03:00:00.000000000 +0300
++++ gst-plugins-good-0.10.16-ds/gst/id3demux/rccpatch.h	2009-10-29 06:23:58.000000000 +0300
+@@ -0,0 +1,12 @@
++#ifndef _RCC_PATCH_H
++#define _RCC_PATCH_H
++
++#include <gst/gst.h>
++
++void rcc_patch_ref();
++void rcc_patch_unref();
++
++gchar *rcc_patch_to_utf8(const gchar *str, const guint size);
++
++
++#endif /* _RCC_PATCH_H */

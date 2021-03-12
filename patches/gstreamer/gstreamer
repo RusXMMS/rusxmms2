@@ -1,0 +1,14 @@
+totem -> gstreamer -> 
+    mp3 playback [mad,ffmpeg,flump3dec]
+    id3 id3demux (plugins-good)
+	it uses tag functions (from plugins-base/gst-libs/gst/tag) to
+	access id3 v.1 and maintains id3 v.2 itself.
+
+tag contains 'gst_tag_freeform_string_to_utf8' which should be rcc'ized and
+used from id3demux (and probably other places) instead of current patch.
+
+The question is initialization...
+
+
+GST_TAG_ENCODING=CP1251 totem 01_-_vpotmah_192_lame_cbr.mp3
+

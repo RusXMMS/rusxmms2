@@ -1,0 +1,130 @@
+diff -dPNur xmms-1.2.11/Input/mpg123/configure.c xmms-1.2.11-new/Input/mpg123/configure.c
+--- xmms-1.2.11/Input/mpg123/configure.c	2005-05-15 02:01:19.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/configure.c	2007-11-24 23:57:29.000000000 +0100
+@@ -27,6 +27,7 @@
+ static GtkWidget *streaming_proxy_hbox, *streaming_proxy_auth_hbox, *streaming_save_dirbrowser;
+ static GtkWidget *streaming_save_hbox, *title_id3_box, *title_tag_desc;
+ static GtkWidget *title_override, *title_id3_entry, *title_id3v2_disable;
++static GtkWidget *id3v2_encoding_override, *id3v2_encoding_box, *encoding_entry;
+ 
+ MPG123Config mpg123_cfg;
+ 
+@@ -105,6 +106,8 @@
+ 	mpg123_cfg.disable_id3v2 = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(title_id3v2_disable));
+ 	g_free(mpg123_cfg.id3_format);
+ 	mpg123_cfg.id3_format = g_strdup(gtk_entry_get_text(GTK_ENTRY(title_id3_entry)));
++	mpg123_cfg.id3v2_encoding_override = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(id3v2_encoding_override));
++	mpg123_cfg.id3v2_default_encoding = g_strdup(gtk_entry_get_text(GTK_ENTRY(encoding_entry)));
+ 
+ 	filename = g_strconcat(g_get_home_dir(), "/.xmms/config", NULL);
+ 	cfg = xmms_cfg_open_file(filename);
+@@ -134,6 +137,8 @@
+ 	xmms_cfg_write_boolean(cfg, "MPG123", "title_override", mpg123_cfg.title_override);
+ 	xmms_cfg_write_boolean(cfg, "MPG123", "disable_id3v2", mpg123_cfg.disable_id3v2);
+ 	xmms_cfg_write_string(cfg, "MPG123", "id3_format", mpg123_cfg.id3_format);
++	xmms_cfg_write_boolean(cfg, "MPG123", "id3v2_encoding_override", mpg123_cfg.id3v2_encoding_override);
++	xmms_cfg_write_string(cfg, "MPG123", "id3v2_default_encoding", mpg123_cfg.id3v2_default_encoding);
+ 	xmms_cfg_write_int(cfg, "MPG123", "detect_by", mpg123_cfg.detect_by);
+ #ifdef USE_SIMD
+ 	xmms_cfg_write_int(cfg, "MPG123", "default_synth", mpg123_cfg.default_synth);
+@@ -212,6 +217,13 @@
+ 	gtk_widget_set_sensitive(title_tag_desc, override);
+ }
+ 
++static void id3v2_encoding_override_cb(GtkWidget * w, gpointer data)
++{
++	gboolean override;
++	override = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(id3v2_encoding_override));
++	gtk_widget_set_sensitive(id3v2_encoding_box, override);
++}
++
+ static void configure_destroy(GtkWidget * w, gpointer data)
+ {
+ 	if (streaming_save_dirbrowser)
+@@ -230,6 +242,7 @@
+ 	GtkWidget *streaming_save_label, *streaming_save_browse;
+ 	GtkWidget *streaming_cast_frame, *streaming_cast_vbox;
+ 	GtkWidget *title_frame, *title_id3_vbox, *title_id3_label;
++	GtkWidget *title_id3_label2;
+ 	GtkWidget *bbox, *ok, *cancel;
+ 
+ 	char *temp;
+@@ -576,6 +589,23 @@
+ 	title_tag_desc = xmms_titlestring_descriptions("pafFetnygc", 2);
+ 	gtk_widget_set_sensitive(title_tag_desc, mpg123_cfg.title_override);
+ 	gtk_box_pack_start(GTK_BOX(title_id3_vbox), title_tag_desc, FALSE, FALSE, 0);
++
++	id3v2_encoding_override = gtk_check_button_new_with_label(_("Override default ID3V2 encoding"));
++	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(id3v2_encoding_override), mpg123_cfg.id3v2_encoding_override);
++	gtk_signal_connect(GTK_OBJECT(id3v2_encoding_override), "clicked", id3v2_encoding_override_cb, NULL);
++	gtk_box_pack_start(GTK_BOX(title_id3_vbox), id3v2_encoding_override, FALSE, FALSE, 0);
++
++	id3v2_encoding_box = gtk_hbox_new(FALSE, 5);
++	gtk_widget_set_sensitive(id3v2_encoding_box, mpg123_cfg.id3v2_encoding_override);
++	gtk_box_pack_start(GTK_BOX(title_id3_vbox), id3v2_encoding_box, FALSE, FALSE, 0);
++
++	title_id3_label2 = gtk_label_new(_("Encoding name:"));
++	gtk_box_pack_start(GTK_BOX(id3v2_encoding_box), title_id3_label2, FALSE, FALSE, 0);
++
++	encoding_entry = gtk_entry_new();
++	gtk_entry_set_text(GTK_ENTRY(encoding_entry), mpg123_cfg.id3v2_default_encoding);
++	gtk_box_pack_start(GTK_BOX(id3v2_encoding_box), encoding_entry, TRUE, TRUE, 0);
++
+ 	gtk_notebook_append_page(GTK_NOTEBOOK(notebook), title_frame, gtk_label_new(_("Title")));
+ 
+ 	bbox = gtk_hbutton_box_new();
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_frame_text.c xmms-1.2.11-new/Input/mpg123/id3_frame_text.c
+--- xmms-1.2.11/Input/mpg123/id3_frame_text.c	2007-11-24 23:57:15.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/id3_frame_text.c	2007-11-24 23:57:29.000000000 +0100
+@@ -29,6 +29,8 @@
+ 
+ #include "libxmms/charset.h"
+ 
++/* For extern mpg123_cfg */
++#include "mpg123.h"
+ 
+ /* Get size of string in bytes including null. */
+ guint id3_string_size(guint8 encoding, const char* text)
+@@ -60,6 +62,9 @@
+ 	switch (encoding)
+ 	{
+ 		case ID3_ENCODING_ISO_8859_1:
++			if (mpg123_cfg.id3v2_encoding_override) {
++				return xmms_charset_convert(text, strlen(text), mpg123_cfg.id3v2_default_encoding, NULL);
++			}
+ 			return xmms_charset_from_latin1(text);
+ 		case ID3_ENCODING_UTF8:
+ 			return xmms_charset_from_utf8(text);
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2007-11-24 23:56:41.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-24 23:57:29.000000000 +0100
+@@ -171,6 +171,7 @@
+ 	mpg123_cfg.use_udp_channel = FALSE;
+ 	mpg123_cfg.title_override = FALSE;
+ 	mpg123_cfg.disable_id3v2 = FALSE;
++	mpg123_cfg.id3v2_encoding_override = FALSE;
+ 	mpg123_cfg.detect_by = DETECT_EXTENSION;
+ 	mpg123_cfg.default_synth = SYNTH_AUTO;
+ 
+@@ -199,6 +200,9 @@
+ 	xmms_cfg_read_boolean(cfg, "MPG123", "disable_id3v2", &mpg123_cfg.disable_id3v2);
+ 	if (!xmms_cfg_read_string(cfg, "MPG123", "id3_format", &mpg123_cfg.id3_format))
+ 		mpg123_cfg.id3_format = g_strdup("%p - %t");
++	xmms_cfg_read_boolean(cfg, "MPG123", "id3v2_encoding_override", &mpg123_cfg.id3v2_encoding_override);
++	if (!xmms_cfg_read_string(cfg, "MPG123", "id3v2_default_encoding", &mpg123_cfg.id3v2_default_encoding))
++		mpg123_cfg.id3_format = g_strdup("ISO-8859-1");
+ 	xmms_cfg_read_int(cfg, "MPG123", "detect_by", &mpg123_cfg.detect_by);
+ 	xmms_cfg_read_int(cfg, "MPG123", "default_synth", &mpg123_cfg.default_synth);
+ 
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.h xmms-1.2.11-new/Input/mpg123/mpg123.h
+--- xmms-1.2.11/Input/mpg123/mpg123.h	2007-11-24 23:53:33.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.h	2007-11-24 23:57:29.000000000 +0100
+@@ -159,6 +159,8 @@
+ 	gboolean use_udp_channel;
+ 	gchar *id3_format;
+ 	gboolean title_override, disable_id3v2;
++	gboolean id3v2_encoding_override;
++	gchar *id3v2_default_encoding;
+ 	int detect_by;
+ 	int default_synth;
+ }

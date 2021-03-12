@@ -1,0 +1,240 @@
+diff -dPNur mpg123-0.65/configure.ac mpg123-0.65-new/configure.ac
+--- mpg123-0.65/configure.ac	2007-02-07 10:24:33.000000000 +0100
++++ mpg123-0.65-new/configure.ac	2007-04-15 13:36:52.000000000 +0200
+@@ -137,6 +137,21 @@
+ AC_CHECK_LIB([m], [sqrt])
+ AC_CHECK_LIB([mx], [powf])
+ 
++# LibRCC
++AC_CHECK_LIB(rcc, rccInit,[
++    AC_CHECK_HEADERS(librcc.h,[
++       LIBRCC_LIBS="-lrcc"
++       LIBRCC_INCLUDES="-DHAVE_LIBRCC"
++    ],[
++       LIBRCC_LIBS=""
++       LIBRCC_INCLUDES=""
++])],[
++    LIBRCC_LIBS=""
++    LIBRCC_INCLUDES=""
++])
++AC_SUBST(LIBRCC_LIBS)
++AC_SUBST(LIBRCC_INCLUDES)
++
+ # Check for JACK
+ PKG_CHECK_MODULES(JACK, jack, HAVE_JACK=yes, HAVE_JACK=no)
+ 
+diff -dPNur mpg123-0.65/src/id3.c mpg123-0.65-new/src/id3.c
+--- mpg123-0.65/src/id3.c	2007-02-07 10:24:33.000000000 +0100
++++ mpg123-0.65-new/src/id3.c	2007-04-15 13:26:06.000000000 +0200
+@@ -6,6 +6,7 @@
+ #include "stringbuf.h"
+ #include "genre.h"
+ #include "id3.h"
++#include "rccpatch.h"
+ 
+ struct taginfo
+ {
+@@ -499,6 +500,8 @@
+ void print_id3_tag(unsigned char *id3v1buf)
+ {
+ 	char genre_from_v1 = 0;
++	char *ctitle, *cartist, *calbum, *ccomment;
++	
+ 	if(!(id3.version || id3v1buf)) return;
+ 	if(id3v1buf != NULL)
+ 	{
+@@ -688,17 +691,26 @@
+ 		free_stringbuf(&tmp);
+ 	}
+ 
++	if (id3.title.fill) ctitle = rccPatchRecode(id3.title.p);
++	else ctitle = NULL;
++	if (id3.artist.fill) cartist = rccPatchRecode(id3.artist.p);
++	else cartist = NULL;
++	if (id3.album.fill) calbum = rccPatchRecode(id3.album.p);
++	else calbum = NULL;
++	if (id3.comment.fill) ccomment = rccPatchRecode(id3.comment.p);
++	else ccomment = NULL;
++
+ 	if(param.long_id3)
+ 	{
+ 		fprintf(stderr,"\n");
+ 		/* print id3v2 */
+ 		/* dammed, I use pointers as bool again! It's so convenient... */
+-		fprintf(stderr,"\tTitle:   %s\n", id3.title.fill ? id3.title.p : "");
+-		fprintf(stderr,"\tArtist:  %s\n", id3.artist.fill ? id3.artist.p : "");
+-		fprintf(stderr,"\tAlbum:   %s\n", id3.album.fill ? id3.album.p : "");
++		fprintf(stderr,"\tTitle:   %s\n", ctitle?ctitle:(id3.title.fill ? id3.title.p : ""));
++		fprintf(stderr,"\tArtist:  %s\n", cartist?cartist:(id3.artist.fill ? id3.artist.p : ""));
++		fprintf(stderr,"\tAlbum:   %s\n", calbum?calbum:(id3.album.fill ? id3.album.p : ""));
+ 		fprintf(stderr,"\tYear:    %s\n", id3.year.fill ? id3.year.p : "");
+ 		fprintf(stderr,"\tGenre:   %s\n", id3.genre.fill ? id3.genre.p : "");
+-		fprintf(stderr,"\tComment: %s\n", id3.comment.fill ? id3.comment.p : "");
++		fprintf(stderr,"\tComment: %s\n", ccomment?ccomment:(id3.comment.fill ? id3.comment.p : ""));
+ 		fprintf(stderr,"\n");
+ 	}
+ 	else
+@@ -708,23 +720,23 @@
+ 		/* one _could_ circumvent the strlen calls... */
+ 		if(id3.title.fill && id3.artist.fill && strlen(id3.title.p) <= 30 && strlen(id3.title.p) <= 30)
+ 		{
+-			fprintf(stderr,"Title:   %-30s  Artist: %s\n",id3.title.p,id3.artist.p);
++			fprintf(stderr,"Title:   %-30s  Artist: %s\n",ctitle?ctitle:id3.title.p,cartist?cartist:id3.artist.p);
+ 		}
+ 		else
+ 		{
+-			if(id3.title.fill) fprintf(stderr,"Title:   %s\n", id3.title.p);
+-			if(id3.artist.fill) fprintf(stderr,"Artist:  %s\n", id3.artist.p);
++			if(id3.title.fill) fprintf(stderr,"Title:   %s\n", ctitle?ctitle:id3.title.p);
++			if(id3.artist.fill) fprintf(stderr,"Artist:  %s\n", cartist?cartist:id3.artist.p);
+ 		}
+ 		if (id3.comment.fill && id3.album.fill && strlen(id3.comment.p) <= 30 && strlen(id3.album.p) <= 30)
+ 		{
+-			fprintf(stderr,"Comment: %-30s  Album:  %s\n",id3.comment.p,id3.album.p);
++			fprintf(stderr,"Comment: %-30s  Album:  %s\n",ccomment?ccomment:id3.comment.p,calbum?calbum:id3.album.p);
+ 		}
+ 		else
+ 		{
+ 			if (id3.comment.fill)
+-				fprintf(stderr,"Comment: %s\n", id3.comment.p);
++				fprintf(stderr,"Comment: %s\n", ccomment?ccomment:id3.comment.p);
+ 			if (id3.album.fill)
+-				fprintf(stderr,"Album:   %s\n", id3.album.p);
++				fprintf(stderr,"Album:   %s\n", calbum?calbum:id3.album.p);
+ 		}
+ 		if (id3.year.fill && id3.genre.fill && strlen(id3.year.p) <= 30 && strlen(id3.genre.p) <= 30)
+ 		{
+@@ -738,6 +750,11 @@
+ 				fprintf(stderr,"Genre:   %s\n", id3.genre.p);
+ 		}
+ 	}
++	
++	if (ctitle) free(ctitle);
++	if (cartist) free(cartist);
++	if (calbum) free(calbum);
++	if (ccomment) free(ccomment);
+ }
+ 
+ /*
+diff -dPNur mpg123-0.65/src/Makefile.am mpg123-0.65-new/src/Makefile.am
+--- mpg123-0.65/src/Makefile.am	2007-02-07 10:24:33.000000000 +0100
++++ mpg123-0.65-new/src/Makefile.am	2007-04-15 13:38:44.000000000 +0200
+@@ -4,8 +4,8 @@
+ ## see COPYING and AUTHORS files in distribution or http://mpg123.de
+ ## initially written by Nicholas J. Humfrey
+ 
+-AM_CFLAGS = @AUDIO_CFLAGS@
+-AM_LDFLAGS = @AUDIO_LIBS@
++AM_CFLAGS = @AUDIO_CFLAGS@ @LIBRCC_INCLUDES@
++AM_LDFLAGS = @AUDIO_LIBS@ @LIBRCC_LIBS@
+ mpg123_LDADD = @AUDIO_OBJ@ @CPU_TYPE_LIB@
+ mpg123_DEPENDENCIES = @AUDIO_OBJ@ @CPU_TYPE_LIB@
+ 
+@@ -14,6 +14,8 @@
+ 
+ bin_PROGRAMS = mpg123
+ mpg123_SOURCES = \
++	rccpatch.c \
++	rccpatch.h \
+ 	audio.c \
+ 	audio.h \
+ 	buffer.c \
+diff -dPNur mpg123-0.65/src/mpg123.c mpg123-0.65-new/src/mpg123.c
+--- mpg123-0.65/src/mpg123.c	2007-02-07 10:24:33.000000000 +0100
++++ mpg123-0.65-new/src/mpg123.c	2007-04-15 13:30:42.000000000 +0200
+@@ -35,6 +35,7 @@
+ #include "layer3.h"
+ #endif
+ #include "playlist.h"
++#include "rccpatch.h"
+ #include "id3.h"
+ #include "icy.h"
+ 
+@@ -814,15 +815,18 @@
+ 
+ 	if(param.remote) {
+ 		int ret;
++		rccPatchInit();
+ 		init_id3();
+ 		init_icy();
+ 		ret = control_generic(&fr);
+ 		clear_icy();
+ 		exit_id3();
++		rccPatchFree();
+ 		safe_exit(ret);
+ 	}
+ #endif
+ 
++	rccPatchInit();
+ 	init_icy();
+ 	init_id3(); /* prepare id3 memory */
+ 	while ((fname = get_next_file())) {
+@@ -851,7 +855,7 @@
+ 	}
+ }
+ #endif
+-
++	
+ 		}
+ 
+ #if !defined(WIN32) && !defined(GENERIC)
+@@ -1031,6 +1035,7 @@
+     } /* end of loop over input files */
+     clear_icy();
+     exit_id3(); /* free id3 memory */
++    rccPatchFree();
+ #ifndef NOXFERMEM
+     if (param.usebuffer) {
+       buffer_end();
+diff -dPNur mpg123-0.65/src/rccpatch.c mpg123-0.65-new/src/rccpatch.c
+--- mpg123-0.65/src/rccpatch.c	1970-01-01 01:00:00.000000000 +0100
++++ mpg123-0.65-new/src/rccpatch.c	2007-04-15 13:13:09.000000000 +0200
+@@ -0,0 +1,40 @@
++#include <librcc.h>
++
++#define ID3_CLASS 0
++#define OUT_CLASS 1
++static rcc_class classes[] = {
++    { "id3", RCC_CLASS_STANDARD, NULL, NULL, "ID3 Encoding", 0 },
++    { "out", RCC_CLASS_STANDARD, NULL, NULL, "Output Encoding", 0 },
++    { NULL }
++};
++
++static int rcc_initialized = 0;
++
++void rccPatchFree() {
++    if (rcc_initialized) {
++       rccFree();
++       rcc_initialized = 0;
++    }
++}
++
++void rccPatchInit() {
++    if (rcc_initialized) return;
++    rccInit();
++    rccInitDefaultContext(NULL, 0, 0, classes, 0);
++    rccLoad(NULL, "xmms");
++    rccInitDb4(NULL, NULL, 0);
++    rcc_initialized = 1;
++}
++
++static void rccPatchTryInit() {
++    if (!rcc_initialized) {
++	rccPatchInit();
++	if (rcc_initialized) atexit(rccPatchFree);	
++    }
++}
++
++char *rccPatchRecode(const char *str) {
++    char *res;
++    rccPatchTryInit();
++    return rccRecode(NULL, ID3_CLASS, OUT_CLASS, str);
++}
+diff -dPNur mpg123-0.65/src/rccpatch.h mpg123-0.65-new/src/rccpatch.h
+--- mpg123-0.65/src/rccpatch.h	1970-01-01 01:00:00.000000000 +0100
++++ mpg123-0.65-new/src/rccpatch.h	2007-04-15 13:13:09.000000000 +0200
+@@ -0,0 +1,4 @@
++void rccPatchFree();
++void rccPatchInit();
++char *rccPatchRecode(const char *str);
++

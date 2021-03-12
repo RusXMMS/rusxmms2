@@ -1,0 +1,191 @@
+diff -Naur xmms-1.2.10-20041012/libxmms/charset.c xmms-1.2.10-20041012.convert/libxmms/charset.c
+--- xmms-1.2.10-20041012/libxmms/charset.c	2004-10-13 01:03:03.258234924 -0700
++++ xmms-1.2.10-20041012.convert/libxmms/charset.c	2004-10-24 23:49:42.083591275 -0700
+@@ -22,7 +22,6 @@
+ 
+ #include "charset.h"
+ 
+-
+ char* xmms_charset_get_current(void)
+ {
+ 	char *charset = getenv("CHARSET");
+@@ -38,6 +37,18 @@
+ 	return charset;
+ }
+ 
++static size_t utf16_strlen(const char *string)
++{
++	size_t len = 0;
++
++	if (!string)
++		return 0;
++
++	while (*(string + len) != 0 || *(string + len + 1) != 0)
++		len += 2;
++
++	return len;
++}
+ 
+ #ifdef HAVE_ICONV
+ char* xmms_charset_convert(const char *string, size_t insize, char *from, char *to)
+@@ -108,15 +119,55 @@
+ {
+ 	if (!string)
+ 		return NULL;
++
+ 	return xmms_charset_convert(string, strlen(string), "UTF-8", NULL);
+ }
+ 
++char *xmms_charset_from_utf16(const unsigned char *string)
++{
++	if (!string)
++		return NULL;
++
++	return xmms_charset_convert(string, utf16_strlen(string), "UTF-16", NULL);
++}
++
++char *xmms_charset_from_utf16be(const unsigned char *string)
++{
++	if (!string)
++		return NULL;
++
++	return xmms_charset_convert(string, utf16_strlen(string), "UTF-16BE", NULL);
++}
++
++char* xmms_charset_from_latin1(const char *string)
++{
++	char *to = xmms_charset_get_current();
++
++	if (!string)
++		return NULL;
++
++	if (!strcmp(to, "UTF-8"))
++		return xmms_charset_convert(string, strlen(string), "ISO-8859-1", to);
++	else
++		return g_strdup(string);
++}
++
+ #else
+ 
+ char* xmms_charset_convert(const char *string, size_t insize, char *from, char *to)
+ {
++	if (!string)
++		return NULL;
++
+ 	if (!strcmp(from, "UTF-8") && !to)
+ 		return xmms_charset_from_utf8(string);
++
++	if (!strcmp(from, "UTF-16") && !to)
++		return xmms_charset_from_utf16(string);
++
++	if (!strcmp(from, "UTF-16BE") && !to)
++		return xmms_charset_from_utf16be(string);
++
+ 	return g_strdup(string);
+ }
+ 
+@@ -155,11 +206,83 @@
+ 	return ascii;
+ }
+ 
++static char* utf16_to_ascii(const unsigned char *utf16, int le)
++{
++	char *ascii;
++	unsigned int i, len, c;
++
++	if (!utf16)
++		return NULL;
++
++	len = utf16_strlen(utf16) / 2 + 1;
++	
++	ascii = g_malloc(len + 1);
++
++	for (i = 0, c = 0; i < len; i++)
++	{
++		guint16 uc;
++		int o = i << 1;
++
++		if (le)
++			uc = *(utf16 + o) | *(utf16 + o + 1) << 8;
++		else
++			uc = *(utf16 + o) << 8 | *(utf16 + o + 1);
++
++		/* Skip BOM and surrogate pairs */
++		if (uc == 0xfeff || (uc >= 0xd800 && uc <= 0xdfff))
++			continue;
++		
++		if (uc < 0x80)
++			ascii[c] = uc;
++		else 
++			ascii[c] = '?';
++		c++;
++	}
++	
++	ascii[c] = 0;
++	return ascii;
++}
++	
++char *xmms_charset_from_utf16(const unsigned char *string)
++{
++	int le = FALSE;
++	guint16 bom;
++
++	if (!string)
++		return NULL;
++
++	bom = *string << 8 | *(string + 1);
++
++	if (bom == 0xfffe)
++		le = TRUE;
++	else if (bom != 0xfeff)
++		return g_strdup("");
++
++	return utf16_to_ascii(string, le);
++}
++
++char *xmms_charset_from_utf16be(const unsigned char *string)
++{
++	if (!string)
++		return NULL;
++
++	return utf16_to_ascii(string, FALSE);
++}
++
++char* xmms_charset_from_latin1(const char *string)
++{
++	if (!string)
++		return NULL;
++
++	return g_strdup(string);
++}
++
+ #endif
+ 
+ char* xmms_charset_to_utf8(const char *string)
+ {
+ 	if (!string)
+ 		return NULL;
++
+ 	return xmms_charset_convert(string, strlen(string), NULL, "UTF-8");
+ }
+diff -Naur xmms-1.2.10-20041012/libxmms/charset.h xmms-1.2.10-20041012.convert/libxmms/charset.h
+--- xmms-1.2.10-20041012/libxmms/charset.h	2004-10-13 01:03:03.260234595 -0700
++++ xmms-1.2.10-20041012.convert/libxmms/charset.h	2004-10-23 08:54:11.421220833 -0700
+@@ -5,11 +5,16 @@
+  *
+  */
+ 
++#ifndef XMMS_CHARSET_H
++#define XMMS_CHARSET_H
+ 
+ char* xmms_charset_get_current(void);
+ char* xmms_charset_convert(const char *string, size_t insize, char *from, char *to);
+ char* xmms_charset_to_utf8(const char *string);
+ char* xmms_charset_from_utf8(const char *string);
++char* xmms_charset_from_utf16(const unsigned char *string);
++char* xmms_charset_from_utf16be(const unsigned char *string);
++char* xmms_charset_from_latin1(const char *string);
+ 
+-
++#endif /* XMMS_CHARSET_H */
+ 

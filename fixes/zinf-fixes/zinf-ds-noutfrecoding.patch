@@ -1,0 +1,20 @@
+diff -dPNur zinf-2.2.5/plm/metadata/id3lib/id3lib.cpp zinf-2.2.5-new/plm/metadata/id3lib/id3lib.cpp
+--- zinf-2.2.5/plm/metadata/id3lib/id3lib.cpp	2004-01-30 13:06:02.000000000 +0100
++++ zinf-2.2.5-new/plm/metadata/id3lib/id3lib.cpp	2005-07-19 23:08:05.000000000 +0200
+@@ -321,16 +321,8 @@
+       if (field) 
+         if (field->Get (buffer, sizeof buffer) > 0) {
+ #ifdef HAVE_GLIB
+-	  if (g_utf8_validate (buffer, -1 , NULL)){
+ 	    result = buffer;
+ 	    return true;
+-	  }
+-	  else {
+-	    utfbuffer=g_convert(buffer, sizeof buffer, "UTF-8", charset.c_str(), NULL, NULL, NULL);
+-	    result=utfbuffer;
+-	    g_free(utfbuffer);
+-	    return true;
+-	  }
+ #else
+ 	   result=buffer;
+ 	   return true;

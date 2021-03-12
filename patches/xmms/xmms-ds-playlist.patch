@@ -1,0 +1,526 @@
+diff -dPNur xmms-1.2.11/xmms/input.c xmms-1.2.11-new/xmms/input.c
+--- xmms-1.2.11/xmms/input.c	2005-05-15 02:01:21.000000000 +0200
++++ xmms-1.2.11-new/xmms/input.c	2008-10-27 18:14:08.000000000 +0100
+@@ -22,6 +22,7 @@
+ #include "libxmms/titlestring.h"
+ #include "libxmms/util.h"
+ #include "libxmms/xentry.h"
++#include "libxmms/rcc.h"
+ 
+ static pthread_mutex_t vis_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+@@ -372,8 +373,12 @@
+ 
+ 		(*title) = xmms_get_titlestring(xmms_get_gentitle_format(),
+ 						input);
+-		if ( (*title) == NULL )
++		if ( (*title) == NULL ) {
++		    (*title) = xmms_rcc_recode(XMMS_RCC_FS, XMMS_RCC_CTYPE, input->file_name);
++		    if (!*title) 
+ 		    (*title) = g_strdup(input->file_name);
++		}
++
+ 		(*length) = -1;
+ 		g_free(temp);
+ 		g_free(input);
+diff -dPNur xmms-1.2.11/xmms/main.c xmms-1.2.11-new/xmms/main.c
+--- xmms-1.2.11/xmms/main.c	2006-07-16 15:40:04.000000000 +0200
++++ xmms-1.2.11-new/xmms/main.c	2008-10-27 18:14:08.000000000 +0100
+@@ -36,6 +36,7 @@
+ #include "libxmms/xmmsctrl.h"
+ #include "libxmms/util.h"
+ #include "libxmms/dirbrowser.h"
++#include "libxmms/rcc.h"
+ #include "xmms_mini.xpm"
+ 
+ #define RANDTABLE_SIZE 128
+@@ -899,6 +900,7 @@
+ 	gtk_timeout_remove(mainwin_timeout_tag);
+ 	util_set_cursor(NULL);
+ 	save_config();
++	xmms_rcc_free();
+ 	cleanup_ctrlsocket();
+ 	playlist_stop_get_info_thread();
+ 	playlist_clear();
+@@ -1036,8 +1038,14 @@
+ 
+ void mainwin_lock_info_text(char *text)
+ {
++	gchar *ctext;
++	ctext = xmms_rcc_recode(XMMS_RCC_CTYPE, XMMS_RCC_OUT, text);
++	if (ctext) text=ctext;
++	
+ 	mainwin_info_text_locked = TRUE;
+ 	textbox_set_text(mainwin_info, text);
++	
++	if (ctext) g_free(ctext);
+ }
+ 
+ void mainwin_release_info_text(void)
+@@ -1695,9 +1703,10 @@
+ 		int match = 0;
+ 		char *title, *filename;
+ 
+-		title = ((PlaylistEntry *) playlist->data)->title;
+-		filename = ((PlaylistEntry *) playlist->data)->filename;
+-
++		title = playlist_check_entrytitle((PlaylistEntry *) playlist->data);
++		filename = xmms_rcc_get(XMMS_RCC_OUT, ((PlaylistEntry *) playlist->data)->fnstring);
++		if (!filename) filename = g_strdup(((PlaylistEntry *) playlist->data)->filename);
++		
+ 		if (title)
+ 			desc_buf[1] = title;
+ 		else if (strchr(filename, '/'))
+@@ -1749,7 +1758,7 @@
+ 			 */
+ 			match = mainwin_jump_to_file_match(song, words, nw);
+ 		}
+-
++		
+ 		if (match)
+ 		{
+ 			int row, queue_pos, *data_buf;
+@@ -1772,6 +1781,10 @@
+ 				row_to_select = row;
+ 		}
+ 
++		g_free(filename);
++		g_free(title);
++
++
+ 		songnr++;
+ 		playlist = playlist->next;
+ 	}
+@@ -2072,8 +2085,10 @@
+ 		int row, *data_buf;
+ 		char *title, *filename, *tmp_buf, *desc_buf[2];
+ 
+-		title = ((PlaylistEntry *) queue->data)->title;
+-		filename = ((PlaylistEntry *) queue->data)->filename;
++		title = playlist_check_entrytitle((PlaylistEntry *) queue->data);
++		filename = xmms_rcc_get(XMMS_RCC_OUT, ((PlaylistEntry *) queue->data)->fnstring);
++		if (!filename) filename = g_strdup(((PlaylistEntry *) queue->data)->filename);
++		
+ 		if (title)
+ 			desc_buf[1] = title;
+ 		else if (strchr(filename, '/'))
+@@ -2086,6 +2101,9 @@
+ 		row = gtk_clist_append(GTK_CLIST(qlist), desc_buf);
+ 		g_free(tmp_buf);
+ 
++		g_free(filename);
++		g_free(title);
++
+ 		data_buf = g_malloc(sizeof (int));
+ 		*data_buf = pos;
+ 		gtk_clist_set_row_data_full(qlist, row, data_buf, g_free);
+@@ -4217,6 +4235,7 @@
+ #endif
+ 
+ 	read_config();
++	xmms_rcc_init();
+ 
+ #if defined(HAVE_SCHED_SETSCHEDULER) && defined(HAVE_SCHED_GET_PRIORITY_MAX)
+ 	if (cfg.use_realtime)
+diff -dPNur xmms-1.2.11/xmms/playlist.c xmms-1.2.11-new/xmms/playlist.c
+--- xmms-1.2.11/xmms/playlist.c	2007-11-16 22:51:30.000000000 +0100
++++ xmms-1.2.11-new/xmms/playlist.c	2008-10-27 18:14:31.000000000 +0100
+@@ -20,6 +20,8 @@
+ #include "xmms.h"
+ #include <time.h>
+ #include "libxmms/util.h"
++#include <locale.h>
++#include "libxmms/rcc.h"
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+@@ -91,6 +93,8 @@
+ 			entry = node->data;
+ 			if (entry->filename)
+ 				g_free(entry->filename);
++			if (entry->fnstring)
++				g_free(entry->fnstring);
+ 			if (entry->title)
+ 				g_free(entry->title);
+ 			g_free(entry);
+@@ -166,6 +170,8 @@
+ 
+ 	if (entry->filename)
+ 		g_free(entry->filename);
++	if (entry->fnstring)
++		g_free(entry->fnstring);
+ 	if (entry->title)
+ 		g_free(entry->title);
+ 	shuffle_list = g_list_remove(shuffle_list, entry);
+@@ -280,9 +286,17 @@
+ 	PlaylistEntry *entry;
+ 
+ 	entry = g_malloc0(sizeof (PlaylistEntry));
++
+ 	entry->filename = g_strdup(filename);
++	entry->fnstring = xmms_rcc_put(XMMS_RCC_FS, filename);
++	if (!entry->fnstring) entry->fnstring = g_strdup(filename);
++	
+ 	if (title)
++	{
++		entry->title = xmms_rcc_put(XMMS_RCC_CTYPE, title);
++		if (!entry->title)
+ 		entry->title = g_strdup(title);
++	}
+ 	entry->length = len;
+ 
+ 	PL_LOCK();
+@@ -624,6 +638,8 @@
+ 	if (playlist_position)
+ 	{
+ 		g_free(playlist_position->title);
++		playlist_position->title = xmms_rcc_put(XMMS_RCC_CTYPE, title);
++		if (!playlist_position->title)
+ 		playlist_position->title = g_strdup(title);
+ 		playlist_position->length = length;
+ 	}
+@@ -1015,6 +1031,7 @@
+ char *playlist_get_info_text(void)
+ {
+ 	char *text, *title, *tmp, *numbers, *length;
++	char *ctitle;
+ 
+ 	PL_LOCK();
+ 	if (!playlist_position)
+@@ -1023,10 +1040,20 @@
+ 		return NULL;
+ 	}
+ 
+-	if (playlist_position->title)
++	if (playlist_position->title) {
++		ctitle = xmms_rcc_get(XMMS_RCC_OUT, playlist_position->title);
++		if (ctitle) title = ctitle;
++		else 
+ 		title = playlist_position->title;
+-	else
++	} else {
++		ctitle = xmms_rcc_get(XMMS_RCC_OUT, playlist_position->fnstring);
++		if (ctitle) {
++		    title = g_strdup(g_basename(ctitle));
++		    g_free(ctitle);
++		    ctitle = title;
++		} else 
+ 		title = g_basename(playlist_position->filename);
++	}
+ 
+ 	/*
+ 	 * If the user don't want numbers in the playlist, don't
+@@ -1048,6 +1075,7 @@
+ 	text = g_strdup_printf("%s%s%s", numbers, title, length);
+ 	g_free(numbers);
+ 	g_free(length);
++	if (ctitle) g_free(ctitle);
+ 
+ 	PL_UNLOCK();
+ 
+@@ -1083,6 +1111,7 @@
+ {
+ 	GList *node;
+ 	FILE *file;
++ 	gchar *ctitle, *cfn;
+ 
+ 	if ((file = fopen(filename, "w")) == NULL)
+ 		return FALSE;
+@@ -1101,10 +1130,12 @@
+ 	while (node)
+ 	{
+ 		PlaylistEntry *entry = node->data;
++		if (!strstr(entry->filename,"://")) cfn = xmms_rcc_fs2pl(entry->fnstring, entry->filename);
++		else cfn=NULL;
+ 		if (is_pls)
+ 			fprintf(file, "File%d=%s\n",
+ 				g_list_position(playlist, node) + 1,
+-				entry->filename);
++				cfn?cfn:entry->filename);
+ 		else
+ 		{
+ 			if (entry->title && cfg.use_pl_metadata)
+@@ -1116,11 +1147,14 @@
+ 				else
+ 					seconds = -1;
+ 
++				ctitle = xmms_rcc_get(XMMS_RCC_PL, entry->title);
+ 				fprintf(file, "#EXTINF:%d,%s\n",
+-					seconds, entry->title);
++					seconds, ctitle?ctitle:entry->title);
++				if (ctitle) g_free(ctitle);
+ 			}
+-			fprintf(file, "%s\n", entry->filename);
++			fprintf(file, "%s\n", cfn?cfn:entry->filename);
+ 		}
++		if (cfn) g_free(cfn);
+ 		node = g_list_next(node);
+ 	}
+ 	PL_UNLOCK();
+@@ -1151,16 +1185,32 @@
+ 			*temp = '\0';
+ 		else
+ 		{
++			if ((!strstr(filename,"://"))&&(!strstr(playlist_name, "://"))) {
++			    temp = xmms_rcc_fs(XMMS_RCC_PLFS, XMMS_RCC_FS, NULL, NULL, filename);
++			    if (temp) filename = temp;
++			} else temp = NULL;
+ 			__playlist_ins_with_info(filename, pos, title, len);
++			if (temp) g_free(temp);
+ 			return;
+ 		}
++		if ((!strstr(filename,"://"))&&(!strstr(playlist_name, "://"))) {
++		    temp = xmms_rcc_fs(XMMS_RCC_PLFS, XMMS_RCC_FS, path, path, filename);
++		    if (temp) filename = temp;
++		} else temp = NULL;
++		if (!temp)
+ 		temp = g_strdup_printf("%s/%s", path, filename);
+ 		__playlist_ins_with_info(temp, pos, title, len);
+ 		g_free(temp);
+ 		g_free(path);
+ 	}
+-	else
++	else {
++		if ((filename[0] == '/')&&(!strstr(playlist_name, "://"))) {
++		    temp = xmms_rcc_fs(XMMS_RCC_PLFS, XMMS_RCC_FS, NULL, NULL, filename);
++		    if (temp) filename = temp;
++		} else temp = NULL;
+ 		__playlist_ins_with_info(filename, pos, title, len);
++		if (temp) g_free(temp);
++	}
+ }
+ 
+ static void parse_extm3u_info(char *info, char **title, int *length)
+@@ -1182,6 +1232,10 @@
+ 		*length *= 1000;
+ 	if ((str = strchr(info, ',')) != NULL)
+ 	{
++		if (*str)
++		    while ((*(str+1)==' ')||(*(str+1)=='\t')) str++; /* g_strstrip removes leading and ending whitespaces */
++		*title = xmms_rcc_put(XMMS_RCC_PL, str + 1);
++		if (!*title)
+ 		*title = g_strdup(str + 1);
+ 		g_strstrip(*title);
+ 		if (strlen(*title) < 1)
+@@ -1210,7 +1264,7 @@
+ 		line = read_ini_string(filename, "playlist", "NumberOfEntries");
+ 		if (line == NULL)
+ 			return 0;
+-
++		
+ 		noe = atoi(line);
+ 		g_free(line);
+ 
+@@ -1372,9 +1426,27 @@
+ 	return ret;
+ }
+ 
++gchar* playlist_check_entrytitle(PlaylistEntry *entry) {
++    gchar *title, *fn;
++    
++    if (!entry) return NULL;
++
++    title = xmms_rcc_get(XMMS_RCC_OUT, entry->title);
++    if (!title) {
++	fn = xmms_rcc_get(XMMS_RCC_OUT, entry->fnstring);
++	if (fn) {
++	    title = g_strdup(g_basename(fn));
++	    g_free(fn);
++	} else title = g_strdup(g_basename(entry->filename));
++    }
++
++    return title;
++}
++
+ char * playlist_get_songtitle(int pos)
+ {
+ 	char *title = NULL, *filename;
++	char *ctitle;
+ 	PlaylistEntry *entry;
+ 	GList *node;
+ 
+@@ -1396,19 +1468,30 @@
+ 	
+ 	if (entry->title == NULL && entry->length == -1)
+ 	{
+-		if (playlist_get_info_entry(entry))
++		if (playlist_get_info_entry(entry)&&(entry->title)) {
++			title = xmms_rcc_get(XMMS_RCC_OUT, entry->title);
++			if (!title)
+ 			title = g_strdup(entry->title);
++		}
+ 
+ 		PL_UNLOCK();
+ 	}
+ 	else
+ 	{
++		title = xmms_rcc_get(XMMS_RCC_OUT, entry->title);
++		if (!title)
+ 		title = g_strdup(entry->title);
+ 		PL_UNLOCK();
+ 	}
+ 
+-	if (title == NULL)
++	if (title == NULL) {
++		ctitle = xmms_rcc_get(XMMS_RCC_OUT, entry->filename);
++		if (ctitle) {
++		    title = g_strdup(g_basename(ctitle));
++		    g_free(ctitle);
++		} else
+ 		title = g_strdup(g_basename(filename));
++	}
+ 
+ 	g_free(filename);
+ 
+@@ -1453,36 +1536,41 @@
+ 
+ static int playlist_sort_by_title_cmpfunc(PlaylistEntry * a, PlaylistEntry * b)
+ {
+-	char *a_title, *b_title;
++	const char *a_title, *b_title;
+ 
+ 	if (a->title)
+-		a_title = a->title;
++		a_title = xmms_rcc_string(a->title);
+ 	else
+ 	{
+-		if (strrchr(a->filename, '/'))
+-			a_title = strrchr(a->filename, '/') + 1;
++		if (strrchr(xmms_rcc_string(a->fnstring), '/'))
++			a_title = strrchr(xmms_rcc_string(a->fnstring), '/') + 1;
+ 		else
+-			a_title = a->filename;
++			a_title = xmms_rcc_string(a->filename);
+ 	}
+ 
+ 	if (b->title)
+-		b_title = b->title;
++		b_title = xmms_rcc_string(b->title);
+ 	else
+ 	{
+-		if (strrchr(a->filename, '/'))
+-			b_title = strrchr(b->filename, '/') + 1;
++		if (strrchr(xmms_rcc_string(a->fnstring), '/'))
++			b_title = strrchr(xmms_rcc_string(b->fnstring), '/') + 1;
+ 		else
+-			b_title = b->filename;
+-
++			b_title = xmms_rcc_string(b->filename);
+ 	}
+-	return strcasecmp(a_title, b_title);
++	return strcoll(a_title, b_title);
+ }
+ 
+ void playlist_sort_by_title(void)
+ {
++	char *locale;
++	locale = setlocale(LC_COLLATE,"en_US.UTF-8");
++	playlist_select_all(1);
++	playlist_read_info_selection();
++	playlist_select_all(0);
+ 	PL_LOCK();
+ 	playlist = g_list_sort(playlist, (GCompareFunc) playlist_sort_by_title_cmpfunc);
+ 	PL_UNLOCK();
++	setlocale(LC_COLLATE,locale);
+ }
+ 
+ static int playlist_sort_by_filename_cmpfunc(PlaylistEntry * a, PlaylistEntry * b)
+@@ -1640,9 +1728,13 @@
+ 
+ void playlist_sort_selected_by_title(void)
+ {
++	char *locale;
++	locale = setlocale(LC_COLLATE,"en_US.UTF-8");
++	playlist_read_info_selection();
+ 	PL_LOCK();	
+ 	playlist = playlist_sort_selected(playlist, (GCompareFunc) playlist_sort_by_title_cmpfunc);
+ 	PL_UNLOCK();
++	setlocale(LC_COLLATE,locale);
+ }
+ 
+ void playlist_sort_selected_by_filename(void)
+@@ -1859,6 +1951,8 @@
+ 		return FALSE;
+ 
+ 	/* entry is still around */
++	entry->title = xmms_rcc_put(XMMS_RCC_CTYPE, temp_title);
++	if (!entry->title)
+ 	entry->title = temp_title;
+ 	entry->length = temp_length;
+ 
+diff -dPNur xmms-1.2.11/xmms/playlist.h xmms-1.2.11-new/xmms/playlist.h
+--- xmms-1.2.11/xmms/playlist.h	2007-11-16 22:51:30.000000000 +0100
++++ xmms-1.2.11-new/xmms/playlist.h	2008-10-27 18:14:08.000000000 +0100
+@@ -23,6 +23,7 @@
+ typedef struct
+ {
+         gchar *filename;
++ 	gchar *fnstring;
+         gchar *title;
+         gint length;
+         gboolean selected;
+@@ -86,6 +87,7 @@
+ void playlist_fileinfo(gint pos);
+ void playlist_delete_index(glong index);
+ void playlist_delete_filenames(GList *filenames);
++gchar* playlist_check_entrytitle(PlaylistEntry *entry);
+ gchar* playlist_get_filename(gint pos);
+ gchar* playlist_get_songtitle(gint pos);
+ gint playlist_get_songtime(gint pos);
+diff -dPNur xmms-1.2.11/xmms/playlist_list.c xmms-1.2.11-new/xmms/playlist_list.c
+--- xmms-1.2.11/xmms/playlist_list.c	2003-06-11 20:44:17.000000000 +0200
++++ xmms-1.2.11-new/xmms/playlist_list.c	2008-10-27 18:14:08.000000000 +0100
+@@ -451,10 +451,8 @@
+ 		else
+ 			gdk_gc_set_foreground(gc, get_skin_color(SKIN_PLEDIT_NORMAL));
+ 
+-		if (entry->title)
+-			title = entry->title;
+-		else
+-			title = g_basename(entry->filename);
++
++		title = playlist_check_entrytitle(entry);
+ 
+ 		pos = playlist_get_queue_position(entry);
+ 		
+@@ -497,6 +495,8 @@
+ 			playlist_list_draw_string(pl, playlist_list_font,
+ 						  i - pl->pl_first, tw, text);
+ 		g_free(text);
++		
++		g_free(title);
+ 	}
+ 	PL_UNLOCK();
+ }
+diff -dPNur xmms-1.2.11/xmms/prefswin.c xmms-1.2.11-new/xmms/prefswin.c
+--- xmms-1.2.11/xmms/prefswin.c	2007-11-16 22:51:30.000000000 +0100
++++ xmms-1.2.11-new/xmms/prefswin.c	2008-10-27 18:14:08.000000000 +0100
+@@ -18,6 +18,7 @@
+  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ #include "xmms.h"
++#include "libxmms/rcc.h"
+ #include "libxmms/util.h"
+ #include "libxmms/titlestring.h"
+ 
+@@ -397,6 +398,8 @@
+ 	draw_playlist_window(TRUE);
+ 	draw_equalizer_window(TRUE);
+ 
++	xmms_rcc_prefswin_apply();
++	
+ 	save_config();
+ }
+ 
+@@ -1105,6 +1108,11 @@
+ 	gtk_notebook_append_page(GTK_NOTEBOOK(prefswin_notebook), prefswin_fonts_vbox, gtk_label_new(_("Fonts")));
+ 
+ 	/*
++	 * Coding Conversion page
++	 */
++	xmms_rcc_prefswin_create(prefswin_notebook);
++	
++	/*
+ 	 * Title page
+ 	 */
+ 	prefswin_title_vbox = gtk_vbox_new(FALSE, 0);

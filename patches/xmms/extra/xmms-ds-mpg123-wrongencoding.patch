@@ -1,0 +1,157 @@
+diff -dPNur xmms-1.2.11-orig/Input/mpg123/id3_frame_text.c xmms-1.2.11/Input/mpg123/id3_frame_text.c
+--- xmms-1.2.11-orig/Input/mpg123/id3_frame_text.c	2008-04-11 15:44:34.000000000 +0200
++++ xmms-1.2.11/Input/mpg123/id3_frame_text.c	2008-04-11 15:52:25.000000000 +0200
+@@ -46,6 +46,7 @@
+ 			break;
+ 		case ID3_ENCODING_UTF16:
+ 		case ID3_ENCODING_UTF16BE:
++		case ID3_ENCODING_UTF16LE:
+ 			while (*text != 0 || *(text + 1) != 0)
+ 			{
+ 				text += 2;
+@@ -73,6 +74,8 @@
+ 			return xmms_charset_from_utf16(text);
+ 		case ID3_ENCODING_UTF16BE:
+ 			return xmms_charset_from_utf16be(text);
++		case ID3_ENCODING_UTF16LE:
++			return xmms_charset_from_utf16le(text);
+ 		default:
+ 			return NULL;
+ 	}
+@@ -88,6 +91,8 @@
+  */
+ gint8 id3_get_encoding(struct id3_frame *frame)
+ {
++	gint8 encoding;
++	
+ 	/* Type check */
+ 	if (!id3_frame_is_text(frame) &&
+ 	    frame->fr_desc->fd_id != ID3_WXXX &&
+@@ -106,7 +111,21 @@
+ 	if (id3_decompress_frame(frame) == -1)
+ 		return -1;
+ 
+-	return *(gint8 *) frame->fr_data;
++	encoding = *(gint8 *) frame->fr_data;
++	
++	switch (encoding) {
++		case ID3_ENCODING_ISO_8859_1:
++		case ID3_ENCODING_UTF8:
++		case ID3_ENCODING_UTF16:
++		case ID3_ENCODING_UTF16BE:
++		    return encoding;
++		case ID3_ENCODING_UTF16LE:
++		    printf("ID3V2 frame (%.4s) has invalid encoding (%u). Assuming UTF-16LE.\n", frame->fr_desc->fd_idstr?frame->fr_desc->fd_idstr:"UNKN", encoding);
++		    return encoding;
++		default:
++		    printf("ID3V2 frame (%.4s) has invalid encoding (%u). Assuming Latin1.\n", frame->fr_desc->fd_idstr?frame->fr_desc->fd_idstr:"UNKN", encoding);
++		    return ID3_ENCODING_ISO_8859_1;
++	}
+ }
+ 
+ 
+@@ -269,6 +288,7 @@
+ 	 else if (encoding == ID3_ENCODING_UTF8) ctext = xmms_charset_to_utf8(text);
+ 	 else if (encoding == ID3_ENCODING_UTF16) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16");
+ 	 else if (encoding == ID3_ENCODING_UTF16BE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16BE");
++	 else if (encoding == ID3_ENCODING_UTF16LE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16LE");
+ 	 else ctext = NULL;
+ 
+ 	if (ctext) text = ctext;
+@@ -433,6 +453,7 @@
+ 	 else if (encoding == ID3_ENCODING_UTF8) ctext = xmms_charset_to_utf8(text);
+ 	 else if (encoding == ID3_ENCODING_UTF16) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16");
+ 	 else if (encoding == ID3_ENCODING_UTF16BE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16BE");
++	 else if (encoding == ID3_ENCODING_UTF16LE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16LE");
+ 	 else ctext = NULL;
+ 	
+ 	if (ctext) text = ctext;
+@@ -453,11 +474,12 @@
+ 	*(gint8 *) frame->fr_raw_data =  encoding;
+ 	memcpy((char*)frame->fr_raw_data + 1, xmms_rcc_get_language(), 3);
+ 
+-	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE)) {
++	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE)||(encoding == ID3_ENCODING_UTF16LE)) {
+ 	    int i;
+ 	    lang = "Comments";
+ 	    if (encoding == ID3_ENCODING_UTF16) cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16");
+-	    else cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16BE");
++	    else if (encoding == ID3_ENCODING_UTF16BE) cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16BE");
++	    else cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16LE");
+ 	    memcpy((char *) frame->fr_raw_data + 4, cdata, 20);
+ 	    g_free(cdata);
+ 	} else
+diff -dPNur xmms-1.2.11-orig/Input/mpg123/id3.h xmms-1.2.11/Input/mpg123/id3.h
+--- xmms-1.2.11-orig/Input/mpg123/id3.h	2008-04-11 15:44:34.000000000 +0200
++++ xmms-1.2.11/Input/mpg123/id3.h	2008-04-11 15:50:58.000000000 +0200
+@@ -141,6 +141,7 @@
+ #define ID3_ENCODING_UTF16	0x01
+ #define ID3_ENCODING_UTF16BE	0x02
+ #define ID3_ENCODING_UTF8	0x03
++#define ID3_ENCODING_UTF16LE	0x04
+ 
+ /*
+  * ID3 frame id numbers.
+@@ -312,7 +313,7 @@
+ 
+ 
+ #define ID3_TEXT_FRAME_ENCODING(frame) \
+-	(*(guint8*)(frame)->fr_data)
++	id3_get_encoding(frame)
+ 
+ #define ID3_TEXT_FRAME_PTR(frame) \
+ 	((char *)(frame)->fr_data + 1)
+diff -dPNur xmms-1.2.11-orig/libxmms/charset.c xmms-1.2.11/libxmms/charset.c
+--- xmms-1.2.11-orig/libxmms/charset.c	2008-04-10 22:49:57.000000000 +0200
++++ xmms-1.2.11/libxmms/charset.c	2008-04-11 15:50:21.000000000 +0200
+@@ -141,6 +141,14 @@
+ 	return xmms_charset_convert(string, utf16_strlen(string), "UTF-16BE", NULL);
+ }
+ 
++char *xmms_charset_from_utf16le(const unsigned char *string)
++{
++	if (!string)
++		return NULL;
++
++	return xmms_charset_convert(string, utf16_strlen(string), "UTF-16LE", NULL);
++}
++
+ char* xmms_charset_from_latin1(const char *string)
+ {
+ 	char *cstring;
+@@ -174,6 +182,9 @@
+ 	if (!strcmp(from, "UTF-16BE") && !to)
+ 		return xmms_charset_from_utf16be(string);
+ 
++	if (!strcmp(from, "UTF-16LE") && !to)
++		return xmms_charset_from_utf16le(string);
++
+ 	return g_strdup(string);
+ }
+ 
+@@ -275,6 +286,14 @@
+ 	return utf16_to_ascii(string, FALSE);
+ }
+ 
++char *xmms_charset_from_utf16le(const unsigned char *string)
++{
++	if (!string)
++		return NULL;
++
++	return utf16_to_ascii(string, TRUE);
++}
++
+ char* xmms_charset_from_latin1(const char *string)
+ {
+ 	char *cstring;
+diff -dPNur xmms-1.2.11-orig/libxmms/charset.h xmms-1.2.11/libxmms/charset.h
+--- xmms-1.2.11-orig/libxmms/charset.h	2008-04-10 22:49:57.000000000 +0200
++++ xmms-1.2.11/libxmms/charset.h	2008-04-11 15:49:47.000000000 +0200
+@@ -14,6 +14,7 @@
+ char* xmms_charset_from_utf8(const char *string);
+ char* xmms_charset_from_utf16(const unsigned char *string);
+ char* xmms_charset_from_utf16be(const unsigned char *string);
++char *xmms_charset_from_utf16le(const unsigned char *string);
+ char* xmms_charset_from_latin1(const char *string);
+ 
+ size_t utf16_strlen(const char *string);

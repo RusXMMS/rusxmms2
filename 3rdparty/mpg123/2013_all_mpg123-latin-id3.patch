@@ -1,0 +1,128 @@
+diff -Naur xmms-1.2.10-20041012/Input/mpg123/Makefile.am xmms-1.2.10-20041012.id3latin/Input/mpg123/Makefile.am
+--- xmms-1.2.10-20041012/Input/mpg123/Makefile.am	2004-10-13 01:03:03.186246768 -0700
++++ xmms-1.2.10-20041012.id3latin/Input/mpg123/Makefile.am	2004-10-23 08:52:23.370409147 -0700
+@@ -15,7 +15,7 @@
+ dxhead.c dxhead.h \
+ id3.c id3.h \
+ id3_frame.c id3_frame_content.c id3_frame_text.c id3_frame_url.c \
+-id3_header.h id3_tag.c unicode.c
++id3_header.h id3_tag.c
+ 
+ if ARCH_X86
+ 
+diff -Naur xmms-1.2.10-20041012/Input/mpg123/id3_frame_text.c xmms-1.2.10-20041012.id3latin/Input/mpg123/id3_frame_text.c
+--- xmms-1.2.10-20041012/Input/mpg123/id3_frame_text.c	2004-10-13 01:03:03.201244300 -0700
++++ xmms-1.2.10-20041012.id3latin/Input/mpg123/id3_frame_text.c	2004-10-23 09:15:29.117825260 -0700
+@@ -60,13 +60,13 @@
+ 	switch (encoding)
+ 	{
+ 		case ID3_ENCODING_ISO_8859_1:
+-			return g_strdup(text);
++			return xmms_charset_from_latin1(text);
+ 		case ID3_ENCODING_UTF8:
+ 			return xmms_charset_from_utf8(text);
+ 		case ID3_ENCODING_UTF16:
+-			return convert_from_utf16(text);
++			return xmms_charset_from_utf16(text);
+ 		case ID3_ENCODING_UTF16BE:
+-			return convert_from_utf16be(text);
++			return xmms_charset_from_utf16be(text);
+ 		default:
+ 			return NULL;
+ 	}
+diff -Naur xmms-1.2.10-20041012/Input/mpg123/unicode.c xmms-1.2.10-20041012.id3latin/Input/mpg123/unicode.c
+--- xmms-1.2.10-20041012/Input/mpg123/unicode.c	2004-10-13 01:03:03.215241997 -0700
++++ xmms-1.2.10-20041012.id3latin/Input/mpg123/unicode.c	1969-12-31 16:00:00.000000000 -0800
+@@ -1,92 +0,0 @@
+-/*
+- * Copyright (C) 2004  Haavard Kvaalen <havardk@xmms.org>
+- *
+- * Licensed under GNU GPL version 2.
+- *
+- */
+-#include "config.h"
+-
+-#include <stdlib.h>
+-#include <glib.h>
+-
+-#include "libxmms/charset.h"
+-
+-size_t utf16_strlen(const char *string)
+-{
+-	size_t len = 0;
+-
+-	while (*(string + len) != 0 || *(string + len + 1) != 0)
+-		len += 2;
+-
+-	return len;
+-}
+-
+-#ifdef HAVE_ICONV
+-
+-char *convert_from_utf16(const unsigned char *utf16)
+-{
+-	return xmms_charset_convert(utf16, utf16_strlen(utf16), "UTF-16", NULL);
+-}
+-
+-char *convert_from_utf16be(const unsigned char *utf16)
+-{
+-	return xmms_charset_convert(utf16, utf16_strlen(utf16), "UTF-16BE", NULL);
+-}
+-
+-
+-#else
+-
+-
+-static char* to_ascii(const unsigned char *utf16, int le)
+-{
+-	char *ascii;
+-	unsigned int i, len, c;
+-
+-	len = utf16_strlen(utf16) / 2 + 1;
+-	
+-	ascii = g_malloc(len + 1);
+-
+-	for (i = 0, c = 0; i < len; i++)
+-	{
+-		guint16 uc;
+-		int o = i << 1;
+-
+-		if (le)
+-			uc = *(utf16 + o) | *(utf16 + o + 1) << 8;
+-		else
+-			uc = *(utf16 + o) << 8 | *(utf16 + o + 1);
+-
+-		/* Skip BOM and surrogate pairs */
+-		if (uc == 0xfeff || (uc >= 0xd800 && uc <= 0xdfff))
+-			continue;
+-		
+-		if (uc < 0x80)
+-			ascii[c] = uc;
+-		else 
+-			ascii[c] = '?';
+-		c++;
+-	}
+-	
+-	ascii[c] = 0;
+-	return ascii;
+-}
+-	
+-char *convert_from_utf16(const unsigned char *utf16)
+-{
+-	int le = FALSE;
+-	guint16 bom = *utf16 << 8 | *(utf16 + 1);
+-
+-	if (bom == 0xfffe)
+-		le = TRUE;
+-	else if (bom != 0xfeff)
+-		return g_strdup("");
+-
+-	return to_ascii(utf16, le);
+-}
+-
+-char *convert_from_utf16be(const unsigned char *utf16)
+-{
+-	return to_ascii(utf16, FALSE);
+-}
+-
+-#endif

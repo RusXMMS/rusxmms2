@@ -1,0 +1,41 @@
+mac is unsupported port for  Monkey Audio Loseless Codec (ape) Acutally, it is
+known for lot of problems on 64bit platforms. Here is patch fixing another one.
+
+
+Some description for future use
+===============================
+ The problems is actully related to converting pointers to/from int type. 
+The portability requires intptr_t to be used for that purposes. However,
+in many places 'int' still specified. Therefore, if acutal pointer is 
+above int size on AMD64, the crashes occurs.
+
+It looks new/malloc on my Gentoo system in the beginning allocates  memory
+in the lower segments and everything goes smoothly. However, after a while
+the allocation from higher regions is started. This could be traced by
+monitoring the result of 
+    mac_info = (PlayerInfo *)g_malloc0(sizeof(PlayerInfo));
+    decompress = CreateIAPEDecompress(pUTF16, &nRetVal);
+in function 'decompress_init' of mac.cpp (xmms-mac). After few iterations they 
+would return high address ptr. Actually, the good method of accelerating 
+crashes, is usage of following code (within decompress_init):
+    
+    rep:
+    decompress = CreateIAPEDecompress(pUTF16, &nRetVal);
+    if (decompress < (void*)0x7FFFFFFF) {
+        void *a=malloc((int)1000*rand());
+        delete decompress;
+        free(a);
+        goto rep;
+    }
+
+Few notes on mac
+================
+MACLib.cpp	- C(stdcall) functions for class construction
+APEDecompress	- main working class which widly utilizes
+UnBitArray	- classes to work with actual data (many int usages within)
+  pIO 		- after a lot of black magick is initialiozed by function 
+		call:
+		    CAPEDecompress::GetInfo
+		which in his order calls:
+		    CAPEInfo::GetInfo
+

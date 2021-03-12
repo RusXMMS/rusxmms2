@@ -1,0 +1,12 @@
+diff -dPNur unzip60/extract.c unzip60-ds/extract.c
+--- unzip60/extract.c	2009-03-14 02:32:52.000000000 +0100
++++ unzip60-ds/extract.c	2010-07-06 16:34:09.000000000 +0200
+@@ -2596,7 +2596,7 @@
+      */
+ #   define UZ_FNFILTER_REPLACECHAR      '?'
+ # endif
+-        if (!isprint(*r)) {
++        if (*r < 32) { //(!isprint(*r)) {
+             if (*r < 32) {
+                 /* ASCII control codes are escaped as "^{letter}". */
+                 if (se != NULL && (s > (space + (size-4)))) {

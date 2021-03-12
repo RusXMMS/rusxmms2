@@ -1,0 +1,20 @@
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2007-11-25 00:04:27.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-25 01:18:57.000000000 +0100
+@@ -3,6 +3,7 @@
+ #include "libxmms/configfile.h"
+ #include "libxmms/titlestring.h"
+ #include "libxmms/charset.h"
++#include "libxmms/rcc.h"
+ #include <string.h>
+ #include <stdlib.h>
+ #include <pthread.h>
+@@ -496,6 +497,8 @@
+ 		/*
+ 		 * Format according to filename.
+ 		 */
++		ret = xmms_rcc_recode(XMMS_RCC_FS, XMMS_RCC_CTYPE, g_basename(filename));
++		if (!ret)
+ 		ret = g_strdup(g_basename(filename));
+ 		if (extname(ret) != NULL)
+ 			*(extname(ret) - 1) = '\0';	/* removes period */

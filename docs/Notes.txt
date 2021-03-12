@@ -1,0 +1,27 @@
+Fonts
+=====
+Some fonts used together with certain broken ID3 strings (for example having 
+chinese tags in ru_RU.KOI8-R locale) causes my Xorg system to crash.
+For, example:
+    -misc-ar pl new sung-medium-r-normal-*-*-100-*-*-c-*-iso10646-1
+
+The tested font configuration for RusXMMS (KOI8 locale) is:
+    shade_font=-misc-fixed-medium-r-semicondensed-*-*-120-*-*-c-*-koi8-r
+    playlist_font=-adobe_koi8_1-helvetica-bold-r-*-*-10-*
+    mainwin_font=-adobe_koi8_1-helvetica-medium-r-*-*-8-*
+
+Fonts containing both cyrillic and chinese glyphs
+    Arphic family
+
+Autotools
+==========
+I got a problem with autotools 1.9 (complaining about invalid AM_PROG_LIBTOOL),
+with 1.10 everything is smooth.
+
+Checking Actual Tags
+====================
+ eyeD3 --debug -v
+    reports invalid ecnodings as latin1
+ 
+ eyeD3 --strict --debug -v
+    throws ValueError exception on invalid encoding

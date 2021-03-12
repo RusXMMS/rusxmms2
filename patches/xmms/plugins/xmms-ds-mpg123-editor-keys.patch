@@ -1,0 +1,164 @@
+diff -dPNur rusxmms-new/Input/mpg123/fileinfo.c rusxmms-new-keys/Input/mpg123/fileinfo.c
+--- rusxmms-new/Input/mpg123/fileinfo.c	2005-07-17 11:46:05.000000000 +0200
++++ rusxmms-new-keys/Input/mpg123/fileinfo.c	2005-07-18 01:12:36.000000000 +0200
+@@ -31,6 +31,10 @@
+ #define MAX_STR_LEN 100
+ #define MAX_ENTRY_LEN2 1023
+ 
++#include <gdk/gdkkeysyms.h>
++#include <gdk/gdktypes.h>
++#include "../../xmms/xmms.h"
++
+ static GtkWidget *window = NULL;
+ static GtkWidget *notebook = NULL;
+ static GtkWidget *filename_entry, *id3v1_frame, *id3v2_frame;
+@@ -507,6 +511,106 @@
+ 		gtk_widget_destroy(w);
+ }
+ 
++static int restore_focus;
++static GtkWidget *save;
++
++
++static GtkWidget **widgets1[] = { &v1_title_entry, &v1_artist_entry, &v1_album_entry, &v1_comment_entry, &v1_year_entry, NULL };
++static GtkWidget **widgets2[] = { &v2_title_entry, &v2_artist_entry, &v2_album_entry, &v2_comment_entry, &v2_year_entry, &v2_composer_entry, &v2_orig_artist_entry, &v2_url_entry, &v2_encoded_by_entry, NULL };
++/* Info: gdktypes.h, gdkkeysyms.h */
++gboolean mpg123_keypress_cb(GtkWidget * w, GdkEventKey * event, gpointer close) {
++    gint pos;
++    GtkWidget ***widgets, *widget, *focused;
++    
++    switch(event->keyval) {
++	case GDK_Return:
++	    restore_focus=1;	    
++	    gtk_signal_emit_by_name(GTK_OBJECT(save), "clicked", NULL);
++	    gtk_signal_emit_by_name(GTK_OBJECT(close), "clicked", NULL);
++	    return TRUE;
++	break;
++	case GDK_Escape:
++	    restore_focus=1;
++	    return TRUE;
++	break;
++    }
++
++    if (event->state&GDK_CONTROL_MASK) {
++	switch(event->keyval) {
++	    case GDK_Left:
++		gtk_notebook_prev_page(GTK_NOTEBOOK(notebook));
++		pos = gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook));
++		if (pos == 0) gtk_window_set_focus(GTK_WINDOW(window), *widgets2[0]);
++		else if (pos == 1) gtk_window_set_focus(GTK_WINDOW(window), *widgets1[0]);
++		gtk_window_activate_focus(GTK_WINDOW(window));
++		return TRUE;
++	    break;
++	    case GDK_Right:
++		gtk_notebook_next_page(GTK_NOTEBOOK(notebook));
++		pos = gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook));
++		if (pos == 0) gtk_window_set_focus(GTK_WINDOW(window), *widgets2[0]);
++		else if (pos == 1) gtk_window_set_focus(GTK_WINDOW(window), *widgets1[0]);
++		gtk_window_activate_focus(GTK_WINDOW(window));
++		return TRUE;
++	    break;
++	}
++    }
++    {
++	switch(event->keyval) {
++	    case GDK_Page_Up:
++		pos = gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook));
++
++		focused = GTK_WINDOW(window)->focus_widget;
++		if (pos == 1) widgets = widgets1;
++		else if (pos == 0) widgets = widgets2;
++		else return FALSE;
++		
++		for (pos = 0; widgets[pos]; pos++) {
++		    if (focused == *widgets[pos]) {
++			if (pos == 0) {
++			    while (widgets[pos+1]) pos++;
++			    widget = *widgets[pos];
++			} else widget = *widgets[pos - 1];
++
++			gtk_window_set_focus(GTK_WINDOW(window), widget);
++			return TRUE;
++		    }
++		}
++	    break;
++	    case GDK_Page_Down:
++	    case GDK_Tab:
++		pos = gtk_notebook_get_current_page(GTK_NOTEBOOK(notebook));
++
++		focused = GTK_WINDOW(window)->focus_widget;
++		if (pos == 1) widgets = widgets1;
++		else if (pos == 0) widgets = widgets2;
++		else return FALSE;
++		
++		for (pos = 0; widgets[pos]; pos++) {
++		    if (focused == *widgets[pos]) {
++			if (widgets[pos + 1]) widget = *widgets[pos + 1];
++			else widget = *widgets[0];
++
++			gtk_window_set_focus(GTK_WINDOW(window), widget);
++			return TRUE;
++		    }
++		}
++		
++	    break;
++	}
++    }
++
++    return FALSE;
++}
++
++void gtk_widget_destroyed_focus(GtkWidget *widget, GtkWidget **widget_pointer) {
++    gtk_widget_destroyed(widget,widget_pointer);    
++    if (restore_focus) {
++	gtk_widget_hide(playlistwin);
++	gtk_widget_show(playlistwin);
++    }
++}
++
+ void mpg123_file_info_box(char *filename)
+ {
+ 	int i;
+@@ -517,6 +621,8 @@
+ 	const char *emphasis[4];
+ 	const char *bool_label[2];
+ 
++ 	restore_focus = 0;
++	
+ 	emphasis[0] = _("None");
+ 	emphasis[1] = _("50/15 ms");
+ 	emphasis[2] = "";
+@@ -529,15 +635,16 @@
+ 		GtkWidget *window_vbox,
+ 		          *id3v1_vbox, *id3v2_vbox, *id3v1_frame_vbox, *id3v2_frame_vbox,
+ 		          *mpeg_lvbox, *mpeg_rvbox, *mpeg_hbox, *mpeg_box, *mpeg_frame,
+-		          *bbox, *save, *close, *copy_to, *copy_from,
++		          *bbox, *close, *copy_to, *copy_from,
+ 		          *table, *label, *filename_hbox;
++ 		GtkAccelGroup *ag;
+ 
+ 		v1_labels_list = g_ptr_array_new();
+ 		v2_labels_list = g_ptr_array_new();
+ 
+ 		window = gtk_window_new(GTK_WINDOW_DIALOG);
+-		gtk_signal_connect(GTK_OBJECT(window), "destroy", GTK_SIGNAL_FUNC(gtk_widget_destroyed), &window);
+-		gtk_signal_connect(GTK_OBJECT(window), "key_press_event", file_info_box_keypress_cb, NULL);
++		gtk_signal_connect(GTK_OBJECT(window), "destroy", GTK_SIGNAL_FUNC(gtk_widget_destroyed_focus), &window);
++//		gtk_signal_connect(GTK_OBJECT(window),"key_press_event",file_info_box_keypress_cb, NULL);
+ 		gtk_container_set_border_width(GTK_CONTAINER(window), 10);
+ 
+ 		window_vbox = gtk_vbox_new(FALSE,10);
+@@ -916,6 +1023,13 @@
+ 		GTK_SIGNAL_FUNC(gtk_widget_destroy), GTK_OBJECT(window));
+ 		gtk_box_pack_start(GTK_BOX(bbox), close, TRUE, TRUE, 5);
+ 
++ 		ag = gtk_accel_group_new();
++ 		gtk_accel_group_add(ag, GDK_Escape, 0, 0, GTK_OBJECT(close), "clicked");
++ 		gtk_accel_group_add(ag, GDK_Return, 0, 0, GTK_OBJECT(save), "clicked");
++ 		gtk_window_add_accel_group(GTK_WINDOW(window), ag);
++
++ 		gtk_signal_connect(GTK_OBJECT(window), "key_press_event", GTK_SIGNAL_FUNC(mpg123_keypress_cb), close);
++
+ 		gtk_container_add(GTK_CONTAINER(window), window_vbox);
+ 		gtk_widget_show_all(window);
+ 	}

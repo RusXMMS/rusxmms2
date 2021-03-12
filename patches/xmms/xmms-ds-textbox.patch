@@ -1,0 +1,31 @@
+diff -dPNur xmms-1.2.10/xmms/textbox.c xmms-1.2.10-patched/xmms/textbox.c
+--- xmms-1.2.10/xmms/textbox.c	2001-12-01 18:00:51.000000000 +0100
++++ xmms-1.2.10-patched/xmms/textbox.c	2005-06-02 22:43:42.000000000 +0200
+@@ -166,6 +166,8 @@
+ 	GdkGC *gc, *maskgc;
+ 	GdkColor *c, pattern;
+ 	GdkBitmap *mask;
++	GdkWChar *wtext;
++	int len;
+ 
+ 	length = strlen(pixmaptext);
+ 
+@@ -192,6 +194,18 @@
+ 			   tb->tb_pixmap_width, tb->tb_widget.height);
+ 	pattern.pixel = 1;
+ 	gdk_gc_set_foreground(maskgc, &pattern);
++	if (cfg.use_fontsets) {
++	    wtext = g_malloc((length + 1) * sizeof(GdkWChar));
++	    len = gdk_mbstowcs(wtext, pixmaptext, length + 1);
++	    if (len == -1) {
++		for (len = 0; pixmaptext[len] != '\0'; len++)
++			wtext[len] = pixmaptext[len];
++	    }
++	    wtext[len] = L'\0';
++	    gdk_draw_text_wc(mask,tb->tb_font, maskgc, 0, tb->tb_font->ascent, wtext, len );
++	    g_free(wtext);
++	} 
++	else
+ 	gdk_draw_text(mask, tb->tb_font, maskgc, 0,
+ 		      tb->tb_font->ascent, pixmaptext, length);
+ 	gdk_gc_unref(maskgc);

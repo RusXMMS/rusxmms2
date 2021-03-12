@@ -1,0 +1,271 @@
+diff -dPNur mpg123-1.7.3/configure.ac mpg123-1.7.3-rusxmms/configure.ac
+--- mpg123-1.7.3/configure.ac	2009-04-27 09:02:40.000000000 +0200
++++ mpg123-1.7.3-rusxmms/configure.ac	2009-06-13 23:22:17.000000000 +0200
+@@ -759,6 +759,21 @@
+ AC_CHECK_LIB([m], [sqrt])
+ AC_CHECK_LIB([mx], [powf])
+ 
++# LibRCC
++AC_CHECK_LIB(rcc, rccInit,[
++    AC_CHECK_HEADERS(librcc.h,[
++       LIBRCC_LIBS="-lrcc"
++       LIBRCC_INCLUDES="-DHAVE_LIBRCC"
++    ],[
++       LIBRCC_LIBS=""
++       LIBRCC_INCLUDES=""
++])],[
++    LIBRCC_LIBS=""
++    LIBRCC_INCLUDES=""
++])
++AC_SUBST(LIBRCC_LIBS)
++AC_SUBST(LIBRCC_INCLUDES)
++
+ # attempt to make the signal stuff work... also with GENERIC - later
+ #if test x"$ac_cv_header_sys_signal_h" = xyes; then
+ #	AC_CHECK_FUNCS( sigemptyset sigaddset sigprocmask sigaction )
+diff -dPNur mpg123-1.7.3/src/libmpg123/id3.c mpg123-1.7.3-rusxmms/src/libmpg123/id3.c
+--- mpg123-1.7.3/src/libmpg123/id3.c	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/libmpg123/id3.c	2009-06-14 00:34:23.000000000 +0200
+@@ -9,6 +9,8 @@
+ #include "mpg123lib_intern.h"
+ #include "id3.h"
+ #include "debug.h"
++#include "rccpatch.h"
++
+ 
+ #ifndef NO_ID3V2 /* Only the main parsing routine will always be there. */
+ 
+@@ -774,6 +776,15 @@
+ 	size_t length = l;
+ 	size_t i;
+ 	unsigned char *p;
++	char *ctitle;
++
++	ctitle = mpg123_rcc_recode(s, l, &i);
++	if (ctitle) {
++	    convert_utf8(sb, ctitle, i);
++	    free(ctitle);
++	    return;
++	}
++
+ 	/* determine real length, a latin1 character can at most take 2  in UTF8 */
+ 	for(i=0; i<l; ++i)
+ 	if(s[i] >= 0x80) ++length;
+diff -dPNur mpg123-1.7.3/src/libmpg123/libmpg123.sym mpg123-1.7.3-rusxmms/src/libmpg123/libmpg123.sym
+--- mpg123-1.7.3/src/libmpg123/libmpg123.sym	2009-04-27 09:07:20.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/libmpg123/libmpg123.sym	2009-06-14 01:53:25.000000000 +0200
+@@ -74,3 +74,8 @@
+ mpg123_position
+ mpg123_length
+ mpg123_set_filesize
++mpg123_rcc_free
++mpg123_rcc_init
++mpg123_rcc_recode
++mpg123_rcc_recode_utf_string
++mpg123_rcc_recode_latin_string
+diff -dPNur mpg123-1.7.3/src/libmpg123/libmpg123.sym.in mpg123-1.7.3-rusxmms/src/libmpg123/libmpg123.sym.in
+--- mpg123-1.7.3/src/libmpg123/libmpg123.sym.in	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/libmpg123/libmpg123.sym.in	2009-06-14 01:51:45.000000000 +0200
+@@ -74,3 +74,8 @@
+ mpg123_position@LARGEFILE_SUFFIX@
+ mpg123_length@LARGEFILE_SUFFIX@
+ mpg123_set_filesize@LARGEFILE_SUFFIX@
++mpg123_rcc_free
++mpg123_rcc_init
++mpg123_rcc_recode
++mpg123_rcc_recode_utf_string
++mpg123_rcc_recode_latin_string
+diff -dPNur mpg123-1.7.3/src/libmpg123/Makefile.am mpg123-1.7.3-rusxmms/src/libmpg123/Makefile.am
+--- mpg123-1.7.3/src/libmpg123/Makefile.am	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/libmpg123/Makefile.am	2009-06-14 00:10:34.000000000 +0200
+@@ -31,6 +31,8 @@
+ libmpg123_la_DEPENDENCIES = @DECODER_LOBJ@ libmpg123.sym
+ 
+ libmpg123_la_SOURCES = \
++	rccpatch.c \
++	rccpatch.h \
+ 	compat.c \
+ 	compat.h \
+ 	parse.c \
+diff -dPNur mpg123-1.7.3/src/libmpg123/rccpatch.c mpg123-1.7.3-rusxmms/src/libmpg123/rccpatch.c
+--- mpg123-1.7.3/src/libmpg123/rccpatch.c	1970-01-01 01:00:00.000000000 +0100
++++ mpg123-1.7.3-rusxmms/src/libmpg123/rccpatch.c	2009-06-14 01:54:37.000000000 +0200
+@@ -0,0 +1,76 @@
++#include <string.h>
++#include <librcc.h>
++#include "mpg123.h"
++
++#define ID3_CLASS 0
++#define UTF_CLASS 1
++#define OUT_CLASS 2
++static rcc_class classes[] = {
++    { "id3", RCC_CLASS_STANDARD, NULL, NULL, "ID3 Encoding", 0 },
++    { "utf", RCC_CLASS_KNOWN, "UTF-8", NULL, "Unicode Encoding", 0 },
++    { "out", RCC_CLASS_STANDARD, NULL, NULL, "Output Encoding", 0 },
++    { NULL }
++};
++
++static int rcc_initialized = 0;
++
++void mpg123_rcc_free() {
++    if (rcc_initialized) {
++       rccFree();
++       rcc_initialized = 0;
++    }
++}
++
++void mpg123_rcc_init() {
++    if (rcc_initialized) return;
++    rccInit();
++    rccInitDefaultContext(NULL, 0, 0, classes, 0);
++    rccLoad(NULL, "xmms");
++    rccInitDb4(NULL, NULL, 0);
++    rcc_initialized = 1;
++}
++
++static void mpg123_rcc_try_init() {
++    if (!rcc_initialized) {
++	mpg123_rcc_init();
++	if (rcc_initialized) atexit(mpg123_rcc_free);	
++    }
++}
++
++
++char *mpg123_rcc_recode(const char *str, size_t len, size_t *rlen) {
++    char *res;
++    mpg123_rcc_try_init();
++    return rccSizedRecode(NULL, ID3_CLASS, UTF_CLASS, str, len, rlen);
++}
++
++static void mpg123_rcc_recode_string(mpg123_string *str, rcc_class_id from, rcc_class_id to) {
++    size_t size;
++    char *res;
++    
++    if ((!str)||(str->fill<2)) return;
++
++    mpg123_rcc_try_init();
++
++    res = rccSizedRecode(NULL, from, to, str->p, str->fill - 1, &size);
++    if (res) {
++	if (size+1>str->size) {
++	    if (!mpg123_resize_string(str, size + 1)) {
++		    // allocation failed
++		free(res);
++		return;
++	    }
++	}
++	strncpy(str->p, res, size + 1);
++	str->fill = size + 1;
++	free(res);
++    }
++}
++
++void mpg123_rcc_recode_utf_string(mpg123_string *str) {
++    mpg123_rcc_recode_string(str, UTF_CLASS, OUT_CLASS);
++}
++
++void mpg123_rcc_recode_latin_string(mpg123_string *str) {
++    mpg123_rcc_recode_string(str, ID3_CLASS, OUT_CLASS);
++}
+diff -dPNur mpg123-1.7.3/src/libmpg123/rccpatch.h mpg123-1.7.3-rusxmms/src/libmpg123/rccpatch.h
+--- mpg123-1.7.3/src/libmpg123/rccpatch.h	1970-01-01 01:00:00.000000000 +0100
++++ mpg123-1.7.3-rusxmms/src/libmpg123/rccpatch.h	2009-06-14 01:51:21.000000000 +0200
+@@ -0,0 +1,5 @@
++void mpg123_rcc_free();
++void mpg123_rcc_init();
++char *mpg123_rcc_recode(const char *str, size_t len, size_t *rlen);
++void mpg123_rcc_recode_utf_string(mpg123_string *str);
++void mpg123_rcc_recode_latin_string(mpg123_string *str);
+diff -dPNur mpg123-1.7.3/src/Makefile.am mpg123-1.7.3-rusxmms/src/Makefile.am
+--- mpg123-1.7.3/src/Makefile.am	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/Makefile.am	2009-06-14 00:10:22.000000000 +0200
+@@ -5,10 +5,10 @@
+ ## initially written by Nicholas J. Humfrey
+ 
+ AM_CPPFLAGS = -DPKGLIBDIR="\"$(pkglibdir)\""
+-mpg123_LDADD = $(LIBLTDL) libmpg123/libmpg123.la @MODULE_OBJ@ @OUTPUT_OBJ@ @OUTPUT_LIBS@
++mpg123_LDADD = $(LIBLTDL) libmpg123/libmpg123.la @MODULE_OBJ@ @OUTPUT_OBJ@ @OUTPUT_LIBS@ @LIBRCC_LIBS@
+ mpg123_LDFLAGS = @LT_LDFLAGS@ @OUTPUT_LDFLAGS@
+ # Just mpg123_INCLUDES has no effect on build! Trying that before reverting to AM_CPPFLAGS.
+-INCLUDES = $(LTDLINCL) -I$(top_builddir)/src/libmpg123 -I$(top_srcdir)/src/libmpg123
++INCLUDES = $(LTDLINCL) -I$(top_builddir)/src/libmpg123 -I$(top_srcdir)/src/libmpg123 @LIBRCC_INCLUDES@
+ # libltdl is not mentioned here... it's not that trivial
+ mpg123_DEPENDENCIES = @OUTPUT_OBJ@ @MODULE_OBJ@ libmpg123/libmpg123.la
+ 
+diff -dPNur mpg123-1.7.3/src/metaprint.c mpg123-1.7.3-rusxmms/src/metaprint.c
+--- mpg123-1.7.3/src/metaprint.c	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/metaprint.c	2009-06-14 01:59:09.000000000 +0200
+@@ -17,7 +17,11 @@
+ 	if(source == NULL) return;
+ 
+ 	if(utf8env) mpg123_copy_string(source, dest);
+-	else utf8_ascii(dest, source);
++	else {
++	    mpg123_copy_string(source, dest);
++	    mpg123_rcc_recode_utf_string(dest);
++//	    utf8_ascii(dest, source);
++	}
+ }
+ 
+ /* print tags... limiting the UTF-8 to ASCII */
+@@ -53,6 +57,7 @@
+ 				strncpy(tag[TITLE].p,v1->title,30);
+ 				tag[TITLE].p[30] = 0;
+ 				tag[TITLE].fill = strlen(tag[TITLE].p) + 1;
++				mpg123_rcc_recode_latin_string(&tag[TITLE]);
+ 			}
+ 		}
+ 		if(!tag[ARTIST].fill)
+@@ -62,6 +67,7 @@
+ 				strncpy(tag[ARTIST].p,v1->artist,30);
+ 				tag[ARTIST].p[30] = 0;
+ 				tag[ARTIST].fill = strlen(tag[ARTIST].p) + 1;
++				mpg123_rcc_recode_latin_string(&tag[ARTIST]);
+ 			}
+ 		}
+ 		if(!tag[ALBUM].fill)
+@@ -71,6 +77,7 @@
+ 				strncpy(tag[ALBUM].p,v1->album,30);
+ 				tag[ALBUM].p[30] = 0;
+ 				tag[ALBUM].fill = strlen(tag[ALBUM].p) + 1;
++				mpg123_rcc_recode_latin_string(&tag[ALBUM]);
+ 			}
+ 		}
+ 		if(!tag[COMMENT].fill)
+@@ -80,6 +87,7 @@
+ 				strncpy(tag[COMMENT].p,v1->comment,30);
+ 				tag[COMMENT].p[30] = 0;
+ 				tag[COMMENT].fill = strlen(tag[COMMENT].p) + 1;
++				mpg123_rcc_recode_latin_string(&tag[COMMENT]);
+ 			}
+ 		}
+ 		if(!tag[YEAR].fill)
+diff -dPNur mpg123-1.7.3/src/mpg123.c mpg123-1.7.3-rusxmms/src/mpg123.c
+--- mpg123-1.7.3/src/mpg123.c	2009-04-27 09:02:12.000000000 +0200
++++ mpg123-1.7.3-rusxmms/src/mpg123.c	2009-06-14 00:35:14.000000000 +0200
+@@ -10,6 +10,7 @@
+ #include "mpg123app.h"
+ #include "mpg123.h"
+ #include "local.h"
++#include "rccpatch.h"
+ 
+ #ifdef HAVE_SYS_WAIT_H
+ #include <sys/wait.h>
+@@ -893,6 +894,8 @@
+ 		if(param.term_ctrl)
+ 			term_init();
+ #endif
++
++	mpg123_rcc_init();
+ 	while ((fname = get_next_file()))
+ 	{
+ 		char *dirname, *filename;
+@@ -1038,6 +1041,8 @@
+ #endif
+       }
+     } /* end of loop over input files */
++    mpg123_rcc_free();
++    
+ 	/* Ensure we played everything. */
+ 	if(param.smooth && param.usebuffer)
+ 	{

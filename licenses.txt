@@ -1,0 +1,25 @@
+taglib - LGPL 2, MPL 
+libid3tag - GPL 2 or later 
+xmms - GPL 2 
+xmms-wma - GPL 2
+7zip - LGPL
+unzip - Info-ZIP 
+gftp - GPL 2 
+moc - GPL 2
+mpg123 - LGPL 2.1
+id3lib - LGPL 2
+
+------------------------
+glib2 - LGPL 2
+gtk+2 - LGPL 2
+
+iconv - LGPL 2
+libxml - BSD like
+enca - GPL 2
+db4 - Open Source License for Oracle Berkeley DB 
+	(GPL compatible, but not LGPL?)
+	
+
+libtranslate - BSD like?
+libguess - BSD like?
+aspell - LGPL 2.1

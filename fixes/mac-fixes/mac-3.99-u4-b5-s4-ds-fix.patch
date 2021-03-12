@@ -1,0 +1,12 @@
+diff -dPNur mac-3.99-u4-b5-s4/src/MACLib/APEDecompress.cpp mac-3.99-u4-b5-s4-new/src/MACLib/APEDecompress.cpp
+--- mac-3.99-u4-b5-s4/src/MACLib/APEDecompress.cpp	2006-06-01 11:00:58.000000000 +0200
++++ mac-3.99-u4-b5-s4-new/src/MACLib/APEDecompress.cpp	2008-04-12 17:39:39.000000000 +0200
+@@ -369,7 +369,7 @@
+ *****************************************************************************************/
+ intptr_t CAPEDecompress::GetInfo(APE_DECOMPRESS_FIELDS Field, intptr_t nParam1, intptr_t nParam2)
+ {
+-    int nRetVal = 0;
++    intptr_t nRetVal = 0;
+     BOOL bHandled = TRUE;
+ 
+     switch (Field)

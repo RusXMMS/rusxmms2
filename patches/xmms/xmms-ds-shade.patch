@@ -1,0 +1,194 @@
+diff -dPNur xmms-1.2.11/xmms/main.c xmms-1.2.11-new/xmms/main.c
+--- xmms-1.2.11/xmms/main.c	2007-11-25 01:10:52.000000000 +0100
++++ xmms-1.2.11-new/xmms/main.c	2007-11-25 01:11:13.000000000 +0100
+@@ -382,6 +382,8 @@
+ 	
+ 	cfg.gentitle_format = NULL;
+ 
++	cfg.shade_font = NULL;
++
+ 	filename = g_strconcat(g_get_home_dir(), "/.xmms/config", NULL);
+ 	cfgfile = xmms_cfg_open_file(filename);
+ 	if (cfgfile)
+@@ -481,6 +483,8 @@
+ 		}
+ 		xmms_cfg_read_string(cfgfile, "xmms", "generic_title_format", &cfg.gentitle_format);
+ 		
++		xmms_cfg_read_string(cfgfile, "xmms", "shade_font", &cfg.shade_font);
++		
+ 		xmms_cfg_free(cfgfile);
+ 	}
+ 
+@@ -519,6 +523,13 @@
+ 	if (cfg.eqpreset_extension == NULL)
+ 		cfg.eqpreset_extension = g_strdup("preset");
+ 
++	if (cfg.shade_font && strlen(cfg.shade_font) == 0) {
++		g_free(cfg.shade_font);
++		cfg.shade_font = NULL;
++	}
++	if (!cfg.shade_font)
++		cfg.shade_font = g_strdup("-misc-fixed-medium-r-*-*-7-*");
++
+ 	g_free(filename);
+ }
+ 
+@@ -677,6 +688,8 @@
+ 	}
+ 	xmms_cfg_write_string(cfgfile, "xmms", "generic_title_format", cfg.gentitle_format);
+ 	
++	xmms_cfg_write_string(cfgfile, "xmms", "shade_font", cfg.shade_font);
++
+ 	xmms_cfg_write_file(cfgfile, filename);
+ 	xmms_cfg_free(cfgfile);
+ 
+diff -dPNur xmms-1.2.11/xmms/main.h xmms-1.2.11-new/xmms/main.h
+--- xmms-1.2.11/xmms/main.h	2006-07-16 15:40:04.000000000 +0200
++++ xmms-1.2.11-new/xmms/main.h	2007-11-25 01:12:55.000000000 +0100
+@@ -60,6 +60,7 @@
+ 	gint mouse_change;
+ 	gboolean playlist_transparent;
+         gchar *gentitle_format;
++   	gchar *shade_font;
+ }
+ Config;
+ 
+diff -dPNur xmms-1.2.11/xmms/playlistwin.c xmms-1.2.11-new/xmms/playlistwin.c
+--- xmms-1.2.11/xmms/playlistwin.c	2007-11-16 22:51:30.000000000 +0100
++++ xmms-1.2.11-new/xmms/playlistwin.c	2007-11-25 01:11:13.000000000 +0100
+@@ -39,7 +39,8 @@
+ PButton *playlistwin_shade, *playlistwin_close;
+ static PlaylistSlider *playlistwin_slider = NULL;
+ static TextBox *playlistwin_time_min, *playlistwin_time_sec;
+-static TextBox *playlistwin_info, *playlistwin_sinfo;
++static TextBox *playlistwin_info;
++TextBox *playlistwin_sinfo;
+ static SButton *playlistwin_srew, *playlistwin_splay;
+ static SButton *playlistwin_spause, *playlistwin_sstop;
+ static SButton *playlistwin_sfwd, *playlistwin_seject;
+@@ -1882,6 +1883,7 @@
+ static void playlistwin_create_widgets(void)
+ {
+ 	playlistwin_sinfo = create_textbox(&playlistwin_wlist, playlistwin_bg, playlistwin_gc, 4, 4, cfg.playlist_width - 35, FALSE, SKIN_TEXT);
++	textbox_set_xfont(playlistwin_sinfo, cfg.mainwin_use_xfont, cfg.shade_font);
+ 	if (!cfg.playlist_shaded)
+ 		hide_widget(playlistwin_sinfo);
+ 	if (cfg.playlist_shaded)
+diff -dPNur xmms-1.2.11/xmms/prefswin.c xmms-1.2.11-new/xmms/prefswin.c
+--- xmms-1.2.11/xmms/prefswin.c	2007-11-25 01:10:52.000000000 +0100
++++ xmms-1.2.11-new/xmms/prefswin.c	2007-11-25 01:11:13.000000000 +0100
+@@ -35,6 +35,7 @@
+ 
+ static GtkWidget *prefswin_options_sd_entry, *prefswin_options_pbs_entry;
+ 	
++static GtkWidget *prefswin_shade_font_entry, *prefswin_shade_font_browse;
+ static GtkWidget *prefswin_options_font_entry, *prefswin_options_font_browse;
+ static GtkWidget *prefswin_options_fontset, *prefswin_mainwin_font_entry;
+ static GtkWidget *prefswin_mainwin_xfont, *prefswin_options_mouse_spin;
+@@ -48,6 +49,7 @@
+ extern PButton *playlistwin_shade, *playlistwin_close, *equalizerwin_close;
+ extern PButton *mainwin_menubtn, *mainwin_minimize, *mainwin_shade, *mainwin_close;
+ extern TextBox *mainwin_info;
++extern TextBox *playlistwin_sinfo;
+ extern gboolean mainwin_focus, equalizerwin_focus, playlistwin_focus;
+ 
+ static gboolean is_opening = FALSE;
+@@ -343,11 +345,13 @@
+ 	gboolean show_wm_old = cfg.show_wm_decorations;
+ 	g_free(cfg.playlist_font);
+ 	g_free(cfg.mainwin_font);
++	g_free(cfg.shade_font);
+ 	g_free(cfg.gentitle_format);
+ 	prefswin_options_write_data();
+ 	cfg.snap_distance = CLAMP(atoi(gtk_entry_get_text(GTK_ENTRY(prefswin_options_sd_entry))), 0, 1000);
+ 	cfg.playlist_font = g_strdup(gtk_entry_get_text(GTK_ENTRY(prefswin_options_font_entry)));
+ 	cfg.mainwin_font = g_strdup(gtk_entry_get_text(GTK_ENTRY(prefswin_mainwin_font_entry)));
++	cfg.shade_font = g_strdup(gtk_entry_get_text(GTK_ENTRY(prefswin_shade_font_entry)));
+ 	cfg.gentitle_format = g_strdup(gtk_entry_get_text(GTK_ENTRY(prefswin_title_entry)));
+ 	cfg.pause_between_songs_time = CLAMP(atoi(gtk_entry_get_text(GTK_ENTRY(prefswin_options_pbs_entry))), 0, 1000);
+ 	cfg.mouse_change = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(prefswin_options_mouse_spin));
+@@ -390,6 +394,7 @@
+ 		prefswin_toggle_wm_decorations();
+ 
+ 	textbox_set_xfont(mainwin_info, cfg.mainwin_use_xfont, cfg.mainwin_font);
++        textbox_set_xfont(playlistwin_sinfo, cfg.mainwin_use_xfont, cfg.shade_font);
+ 	playlist_list_set_font(cfg.playlist_font);
+ 	playlistwin_update_list();
+ 	mainwin_set_info_text();
+@@ -475,6 +480,34 @@
+ 	}
+ }
+ 
++void prefswin_shade_font_browse_ok(GtkWidget * w, gpointer data)
++{
++	GtkFontSelectionDialog *fontsel = GTK_FONT_SELECTION_DIALOG(data);
++	gchar *fontname;
++
++	fontname = gtk_font_selection_dialog_get_font_name(fontsel);
++	
++	if (fontname)
++		gtk_entry_set_text(GTK_ENTRY(prefswin_shade_font_entry), fontname);
++
++	gtk_widget_destroy(GTK_WIDGET(fontsel));
++}
++
++void prefswin_shade_font_browse_cb(GtkWidget * w, gpointer data)
++{
++	static GtkWidget *fontsel;
++
++	if (fontsel != NULL)
++		return;
++
++	fontsel = gtk_font_selection_dialog_new(_("Select playlist font:"));
++	gtk_font_selection_dialog_set_font_name(GTK_FONT_SELECTION_DIALOG(fontsel), gtk_entry_get_text(GTK_ENTRY(prefswin_shade_font_entry)));
++	gtk_signal_connect(GTK_OBJECT(GTK_FONT_SELECTION_DIALOG(fontsel)->ok_button), "clicked", GTK_SIGNAL_FUNC(prefswin_shade_font_browse_ok), fontsel);
++	gtk_signal_connect_object(GTK_OBJECT(GTK_FONT_SELECTION_DIALOG(fontsel)->cancel_button), "clicked", GTK_SIGNAL_FUNC(gtk_widget_destroy), GTK_OBJECT(fontsel));
++	gtk_signal_connect(GTK_OBJECT(fontsel), "destroy", GTK_SIGNAL_FUNC(gtk_widget_destroyed), &fontsel);
++	gtk_widget_show(fontsel);
++}
++
+ void prefswin_gplugins_use_cb(GtkToggleButton * w, gpointer data)
+ {
+ 	gint sel;
+@@ -693,7 +726,10 @@
+ 	GtkWidget *prefswin_vplugins_box, *prefswin_vplugins_vbox;
+ 	GtkWidget *prefswin_vplugins_frame, *prefswin_vplugins_hbox;
+ 	GtkWidget *prefswin_vplugins_hbbox;
+-	
++
++	GtkWidget *prefswin_fonts_shade_frame;
++	GtkWidget *options_font_shade_hbox, *options_font_shade_vbox;
++
+ 	GtkWidget *prefswin_options_frame, *prefswin_options_vbox;
+ 	GtkWidget *prefswin_mainwin_frame, *prefswin_mainwin_vbox;
+ 	GtkWidget *prefswin_fonts_vbox, *prefswin_fonts_playlist_frame;
+@@ -1105,6 +1141,21 @@
+ 	gtk_widget_set_usize(prefswin_mainwin_font_browse, 85, 17);
+ 	gtk_box_pack_start(GTK_BOX(prefswin_mainwin_font_hbox), prefswin_mainwin_font_browse, FALSE, TRUE, 0);
+ 
++	prefswin_fonts_shade_frame = gtk_frame_new(_("Shade"));
++	gtk_container_set_border_width(GTK_CONTAINER(prefswin_fonts_shade_frame), 5);
++	gtk_box_pack_start(GTK_BOX(prefswin_fonts_vbox), prefswin_fonts_shade_frame, FALSE, FALSE, 0);
++	options_font_shade_vbox = gtk_vbox_new(FALSE, 5);
++	gtk_container_border_width(GTK_CONTAINER(options_font_shade_vbox), 5);
++	gtk_container_add(GTK_CONTAINER(prefswin_fonts_shade_frame), options_font_shade_vbox);
++	options_font_shade_hbox = gtk_hbox_new(FALSE, 5);
++	gtk_box_pack_start_defaults(GTK_BOX(options_font_shade_vbox), options_font_shade_hbox);
++	prefswin_shade_font_entry = gtk_entry_new();
++	gtk_box_pack_start(GTK_BOX(options_font_shade_hbox), prefswin_shade_font_entry, TRUE, TRUE, 0);
++	prefswin_shade_font_browse = gtk_button_new_with_label(_("Browse"));
++	gtk_signal_connect(GTK_OBJECT(prefswin_shade_font_browse), "clicked", GTK_SIGNAL_FUNC(prefswin_shade_font_browse_cb), NULL);
++	gtk_widget_set_usize(prefswin_shade_font_browse, 85, 17);
++	gtk_box_pack_start(GTK_BOX(options_font_shade_hbox), prefswin_shade_font_browse, FALSE, TRUE, 0);
++
+ 	gtk_notebook_append_page(GTK_NOTEBOOK(prefswin_notebook), prefswin_fonts_vbox, gtk_label_new(_("Fonts")));
+ 
+ 	/*
+@@ -1390,6 +1441,7 @@
+ 
+ 	gtk_entry_set_text(GTK_ENTRY(prefswin_options_font_entry), cfg.playlist_font);
+ 	gtk_entry_set_text(GTK_ENTRY(prefswin_mainwin_font_entry), cfg.mainwin_font);
++	gtk_entry_set_text(GTK_ENTRY(prefswin_shade_font_entry), cfg.shade_font);
+ 	gtk_entry_set_text(GTK_ENTRY(prefswin_title_entry), cfg.gentitle_format);
+ 	sprintf(temp, "%u", cfg.snap_distance);
+ 	gtk_entry_set_text(GTK_ENTRY(prefswin_options_sd_entry), temp);

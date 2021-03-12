@@ -1,0 +1,766 @@
+diff -dPNur xmms-1.2.11/configure.in xmms-1.2.11-new/configure.in
+--- xmms-1.2.11/configure.in	2007-11-16 22:52:30.000000000 +0100
++++ xmms-1.2.11-new/configure.in	2007-11-25 00:00:09.000000000 +0100
+@@ -144,6 +144,22 @@
+ fi
+ AC_SUBST([PTHREAD_LIBS])
+ 
++dnl *** OpenSSL support
++AC_ARG_ENABLE( ssl,
++[  --disable-ssl           Disable HTTP SSL in plugin(s) [default=enabled]],,
++		enable_ssl="yes")
++
++if test "x$enable_ssl" = xyes; then
++	SSL_LIBS=""
++	AC_CHECK_LIB(ssl, SSL_read, [SSL_LIBS="-lssl"
++			AC_DEFINE(HTTP_SSL,,[Define if OpenSSL is available])
++			AC_DEFINE(OPENSSL_NO_KRB5,,[Define if OpenSSL is available])], 
++			echo "*** SSL support requires openssl and openssl-devel packages ***")
++	LIBS="$LIBS $SSL_LIBS"
++else
++	AC_MSG_RESULT([*** Disabling SSL in plugin(s) per user request ***])
++	have_ssl=no
++fi
+ 
+ dnl ***
+ dnl *** OpenGL
+diff -dPNur xmms-1.2.11/Input/mpg123/common.c xmms-1.2.11-new/Input/mpg123/common.c
+--- xmms-1.2.11/Input/mpg123/common.c	2007-11-24 23:59:35.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/common.c	2007-11-25 00:00:09.000000000 +0100
+@@ -464,7 +464,11 @@
+ void mpg123_open_stream(char *bs_filenam, int fd, unsigned long range)
+ {
+ 	filept_opened = 1;
++#ifdef HTTP_SSL
++	if (!strncasecmp(bs_filenam, "http://", 7) || !strncasecmp(bs_filenam, "https://", 8))
++#else
+ 	if (!strncasecmp(bs_filenam, "http://", 7))
++#endif
+ 	{
+ 		filept = NULL;
+ 		mpg123_info->filesize = 0;
+diff -dPNur xmms-1.2.11/Input/mpg123/http.c xmms-1.2.11-new/Input/mpg123/http.c
+--- xmms-1.2.11/Input/mpg123/http.c	2007-11-24 23:53:33.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/http.c	2007-11-25 00:00:09.000000000 +0100
+@@ -33,6 +33,14 @@
+ #include "mpg123.h"
+ #include "libxmms/util.h"
+ 
++#ifdef HTTP_SSL
++#include <openssl/ssl.h>
++#include <openssl/err.h>
++#include <openssl/x509.h>
++#include <openssl/pem.h>
++#include <openssl/crypto.h>
++#endif
++
+ #define min(x,y) ((x)<(y)?(x):(y))
+ #define min3(x,y,z) (min(x,y)<(z)?min(x,y):(z))
+ #define min4(x,y,z,w) (min3(x,y,z)<(w)?min3(x,y,z):(w))
+@@ -117,7 +125,11 @@
+ 	return res;
+ }
+ 
++#ifdef HTTP_SSL
++static void parse_url(const gchar * url, gchar ** user, gchar ** pass, gchar ** host, int *port, gchar ** filename, int *ssl)
++#else
+ static void parse_url(const gchar * url, gchar ** user, gchar ** pass, gchar ** host, int *port, gchar ** filename)
++#endif
+ {
+ 	gchar *h, *p, *pt, *f, *temp, *ptr;
+ 
+@@ -126,6 +138,14 @@
+ 
+ 	if (!strncasecmp("http://", ptr, 7))
+ 		ptr += 7;
++#ifdef HTTP_SSL
++	if (!strncasecmp("https://", ptr, 8)) {
++		ptr += 8;
++		*ssl = 1;
++	} else
++		*ssl = 0;
++#endif
++	
+ 	h = strchr(ptr, '@');
+ 	f = strchr(ptr, '/');
+ 	if (h != NULL && (!f || h < f))
+@@ -160,7 +180,12 @@
+ 	{
+ 		if (f)
+ 			*f = '\0';
+-		*port = 80;
++#ifdef HTTP_SSL
++		if (*ssl)
++			*port = 443;
++		else
++#endif
++			*port = 80;
+ 	}
+ 	*host = g_strdup(h);
+ 	
+@@ -302,16 +327,27 @@
+ 	return FALSE;
+ }
+ 
++#ifdef HTTP_SSL
++gint mpg123_http_read_line(gchar * buf, gint size, SSL *ssl_c)
++#else
+ gint mpg123_http_read_line(gchar * buf, gint size)
++#endif
+ {
+-	gint i = 0;
++	gint i = 0, rc;
+ 
+ 	while (going && i < size - 1)
+ 	{
+ 		if (http_check_for_data())
+ 		{
+-			if (read(sock, buf + i, 1) <= 0)
+-				return -1;
++#ifdef HTTP_SSL
++			if (ssl_c) {
++				while ((rc = SSL_read(ssl_c, buf + i, 1)) == -1);
++				if (rc <= 0)
++					return -1;
++			} else
++#endif
++				if (read(sock, buf + i, 1) <= 0)
++					return -1;
+ 			if (buf[i] == '\n')
+ 				break;
+ 			if (buf[i] != '\r')
+@@ -342,7 +378,13 @@
+ 	struct sockaddr_in address;
+ #endif
+ 	struct timeval tv;
+-
++#ifdef HTTP_SSL
++	SSL *ssl_c = NULL;
++	SSL_CTX *ssl_ctx = NULL;
++	BIO *b = NULL;
++	gint ssl=0;
++#endif
++	
+ 	url = (gchar *) arg;
+ 	do
+ 	{
+@@ -350,7 +392,11 @@
+ 	
+ 		g_strstrip(url);
+ 
++#ifdef HTTP_SSL
++		parse_url(url, &user, &pass, &host, &port, &filename, &ssl);
++#else
+ 		parse_url(url, &user, &pass, &host, &port, &filename);
++#endif
+ 
+ 		if ((!filename || !*filename) && url[strlen(url) - 1] != '/')
+ 			temp = g_strconcat(url, "/", NULL);
+@@ -362,6 +408,26 @@
+ 		chost = mpg123_cfg.use_proxy ? mpg123_cfg.proxy_host : host;
+ 		cport = mpg123_cfg.use_proxy ? mpg123_cfg.proxy_port : port;
+ 
++#ifdef HTTP_SSL
++		if (ssl) {
++			SSL_library_init();
++			OpenSSL_add_ssl_algorithms();
++			SSL_load_error_strings();
++			
++			ssl_ctx = SSL_CTX_new(SSLv23_client_method());
++			if (ssl_ctx == NULL) {
++				fprintf(stderr, "SSL_CTX_new() failed.");
++				eof = TRUE;
++			}
++			
++			ssl_c = SSL_new(ssl_ctx);
++			if (ssl_c == NULL) {
++				fprintf(stderr, "SSL_new() failed.\n");
++				eof = TRUE;
++			}
++		}
++#endif
++
+ #ifdef USE_IPV6
+ 		g_snprintf(service, 6, "%d", cport);
+ 		memset(&hints, 0, sizeof(hints));
+@@ -441,7 +507,20 @@
+ 					eof = TRUE;
+ 				}
+ 			}
++#ifdef HTTP_SSL
++			if (ssl) {
++				b = BIO_new_socket(sock, BIO_NOCLOSE);
++				if (b == NULL) {
++					printf("BIO_new_socket() failed.\n");
++					eof = TRUE;
++				}
++				
++				// cannot fail
++				SSL_set_bio(ssl_c, b, b);
++			} 
++#endif
+ #endif
++			
+ 			while (going)
+ 			{
+ 				tv.tv_sec = 0;
+@@ -466,6 +545,24 @@
+ 					break;
+ 				}
+ 			}
++#ifdef HTTP_SSL
++			if (ssl) {
++				int rc;
++
++				SSL_set_connect_state(ssl_c);
++				
++				while ((rc = SSL_connect(ssl_c)) == -1); 
++				if (rc <= 0) {
++					fprintf(stderr, "SSL_connect() error. SSL error code: %d.\n", 
++						SSL_get_error(ssl_c, rc));
++				}
++				while ((rc = SSL_do_handshake(ssl_c)) == -1); 
++				if (rc <= 0) {
++					fprintf(stderr, "SSL_do_handshake() error. SSL error code: %d.\n",
++						SSL_get_error(ssl_c, rc));
++				}
++			}
++#endif
+ 			if (!eof)
+ 			{
+ 				gchar *auth = NULL, *proxy_auth = NULL;
+@@ -517,14 +614,30 @@
+ 					g_free(proxy_auth);
+ 				if(auth)
+ 					g_free(auth);
+-				write(sock, temp, strlen(temp));
++#ifdef HTTP_SSL
++				if (ssl) {
++					int rc;
++					while ((rc = SSL_write(ssl_c, temp, strlen(temp))) == -1);
++					if (rc <= 0) {
++						fprintf(stderr, "SSL_write() error. SSL error code: %d.\n",
++							SSL_get_error(ssl_c, rc));
++						eof = TRUE;
++					}
++				} else
++#endif
++					write(sock, temp, strlen(temp));
++
+ 				g_free(temp);
+ 				mpg123_ip.set_info_text(_("CONNECTED: WAITING FOR REPLY"));
+ 				while (going && !eof)
+ 				  {
+ 					if (http_check_for_data())
+ 					{
++#ifdef HTTP_SSL
++						if (mpg123_http_read_line(line, 1024, ssl_c))
++#else
+ 						if (mpg123_http_read_line(line, 1024))
++#endif
+ 						{
+ 							status = strchr(line, ' ');
+ 							if (status)
+@@ -537,7 +650,11 @@
+ 									{
+ 										if(http_check_for_data())
+ 										{
++#ifdef HTTP_SSL
++											if((cnt = mpg123_http_read_line(line, 1024, ssl_c)) != -1)
++#else
+ 											if((cnt = mpg123_http_read_line(line, 1024)) != -1)
++#endif
+ 											{
+ 												if(!cnt)
+ 													break;
+@@ -579,7 +696,11 @@
+ 				{
+ 					if (http_check_for_data())
+ 					{
++#ifdef HTTP_SSL
++						if ((cnt = mpg123_http_read_line(line, 1024, ssl_c)) != -1)
++#else
+ 						if ((cnt = mpg123_http_read_line(line, 1024)) != -1)
++#endif
+ 						{
+ 							if (!cnt)
+ 								break;
+@@ -617,6 +738,10 @@
+ 				fclose(output_file);
+ 				output_file = NULL;
+ 			}
++#ifdef HTTP_SSL
++			if (ssl)
++				SSL_shutdown(ssl_c);
++#endif
+ 			close(sock);
+ 			g_free(user);
+ 			g_free(pass);
+@@ -634,6 +759,10 @@
+ 		fname = file;
+ 		if (!strncasecmp(fname, "http://", 7))
+ 			fname += 7;
++#ifdef HTTP_SSL
++		if (!strncasecmp(fname, "https://", 8))
++			fname += 8;
++#endif
+ 		temp = strrchr(fname, '.');
+ 		if (temp && !strcasecmp(temp, ".mp3"))
+ 			*temp = '\0';
+@@ -668,7 +797,12 @@
+ 				cnt = min(http_free(), buffer_length - wr_index);
+ 				if (cnt > 1024)
+ 					cnt = 1024;
+-				written = read(sock, buffer + wr_index, cnt);
++#ifdef HTTP_SSL
++				if (ssl) 
++					while ((written = SSL_read(ssl_c, buffer + wr_index, cnt)) == -1);
++				else
++#endif
++					written = read(sock, buffer + wr_index, cnt);
+ 				if (written <= 0)
+ 				{
+ 					eof = TRUE;
+@@ -715,6 +849,10 @@
+ 		fclose(output_file);
+ 		output_file = NULL;
+ 	}
++#ifdef HTTP_SSL
++	if (ssl)
++		SSL_shutdown(ssl_c);
++#endif
+ 	close(sock);
+ 	if (udp_sock != 0)
+ 		close(udp_sock);
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2007-11-24 23:59:35.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-25 00:00:09.000000000 +0100
+@@ -317,7 +317,11 @@
+ 	char *ext;
+ 	guint16 wavid;
+ 
++#ifdef HTTP_SSL
++	if (!strncasecmp(filename, "http://", 7) || !strncasecmp(filename, "https://", 8))
++#else
+ 	if (!strncasecmp(filename, "http://", 7))
++#endif
+ 	{			/* We assume all http:// (except those ending in .ogg) are mpeg -- why do we do that? */
+ 		ext = strrchr(filename, '.');
+ 		if (ext)
+@@ -801,7 +805,11 @@
+ 	/*
+ 	 * TODO: Getting song info from http streams.
+ 	 */
++#ifdef HTTP_SSL
++	if (strncasecmp(filename, "http://", 7) && strncasecmp(filename, "https://", 8))
++#else
+ 	if (strncasecmp(filename, "http://", 7))
++#endif
+ 	{
+ 		if ((file = fopen(filename, "rb")) != NULL)
+ 		{
+@@ -890,7 +898,12 @@
+ 		mpg123_init_layer3(fr.down_sample_sblimit);
+ 
+ 		mpg123_info->tpf = mpg123_compute_tpf(&fr);
++
++#ifdef HTTP_SSL
++		if (strncasecmp(filename, "http://", 7) && strncasecmp(filename, "https://", 8))
++#else
+ 		if (strncasecmp(filename, "http://", 7))
++#endif
+ 		{
+ 			if (mpg123_stream_check_for_xing_header(&fr, &xing_header))
+ 			{
+@@ -937,7 +950,11 @@
+ 		mpg123_mode = fr.mode;
+ 		mpg123_length = mpg123_info->num_frames * mpg123_info->tpf * 1000;
+ 		
++#ifdef HTTP_SSL
++		if (strncasecmp(filename, "http://", 7) && strncasecmp(filename, "https://", 8))
++#else
+ 		if (strncasecmp(filename, "http://", 7))
++#endif
+ 		{
+ 			if (!mpg123_title)
+ 				mpg123_title = get_song_title(NULL,filename);
+@@ -1050,7 +1067,11 @@
+ 					{
+ 						/* FIXME networks streams */
+ 						disp_bitrate = mpg123_bitrate;
++#ifdef HTTP_SSL
++						if(!have_xing_header && strncasecmp(filename,"http://",7) && strncasecmp(filename, "https://", 8))
++#else
+ 						if(!have_xing_header && strncasecmp(filename,"http://",7))
++#endif
+ 						{
+ 							double rel = mpg123_relative_pos();
+ 							if (rel)
+diff -dPNur xmms-1.2.11/Input/vorbis/fileinfo.c xmms-1.2.11-new/Input/vorbis/fileinfo.c
+--- xmms-1.2.11/Input/vorbis/fileinfo.c	2005-05-15 02:01:20.000000000 +0200
++++ xmms-1.2.11-new/Input/vorbis/fileinfo.c	2007-11-25 00:00:09.000000000 +0100
+@@ -227,7 +227,12 @@
+ 	vcedit_state *state;
+ 	vorbis_comment *comment;
+ 
++#ifdef HTTP_SSL
++	if (!g_strncasecmp(vte.filename, "http://", 7) || 
++	    !g_strncasecmp(vte.filename, "https://", 8))
++#else
+ 	if (!g_strncasecmp(vte.filename, "http://", 7))
++#endif
+ 		return;
+ 	
+ 	state = vcedit_new_state();
+@@ -303,7 +308,12 @@
+ 	vcedit_state *state;
+ 	vorbis_comment *comment;
+ 
++#ifdef HTTP_SSL
++	if (!g_strncasecmp(vte.filename, "http://", 7) || 
++	    !g_strncasecmp(vte.filename, "https://", 8))
++#else
+ 	if (!g_strncasecmp(vte.filename, "http://", 7))
++#endif
+ 		return;
+ 
+ 	state = vcedit_new_state();
+@@ -800,7 +810,12 @@
+ 	} else
+ 		gdk_window_raise(window->window);
+ 
++#ifdef HTTP_SSL
++	if (!g_strncasecmp(vte.filename, "http://", 7) || 
++	    !g_strncasecmp(vte.filename, "https://", 8))
++#else
+ 	if (!g_strncasecmp(vte.filename, "http://", 7))
++#endif
+ 		gtk_widget_set_sensitive(tag_frame, FALSE);
+ 	else
+ 		gtk_widget_set_sensitive(tag_frame, TRUE);		
+diff -dPNur xmms-1.2.11/Input/vorbis/http.c xmms-1.2.11-new/Input/vorbis/http.c
+--- xmms-1.2.11/Input/vorbis/http.c	2007-11-16 22:51:24.000000000 +0100
++++ xmms-1.2.11-new/Input/vorbis/http.c	2007-11-25 00:03:11.000000000 +0100
+@@ -39,6 +39,10 @@
+ #include "xmms/plugin.h"
+ #include "xmms/i18n.h"
+ 
++#ifdef HTTP_SSL
++#include <openssl/ssl.h>
++#endif
++
+ #define min(x,y) ((x)<(y)?(x):(y))
+ #define min3(x,y,z) (min(x,y)<(z)?min(x,y):(z))
+ #define min4(x,y,z,w) (min3(x,y,z)<(w)?min3(x,y,z):(w))
+@@ -116,7 +120,11 @@
+ 	return res;
+ }
+ 
++#ifdef HTTP_SSL
++static void parse_url(const gchar * url, gchar ** user, gchar ** pass, gchar ** host, int *port, gchar ** filename, int *ssl)
++#else
+ static void parse_url(const gchar * url, gchar ** user, gchar ** pass, gchar ** host, int *port, gchar ** filename)
++#endif
+ {
+ 	gchar *h, *p, *pt, *f, *temp, *ptr;
+ 
+@@ -125,6 +133,14 @@
+ 
+ 	if (!strncasecmp("http://", ptr, 7))
+ 		ptr += 7;
++#ifdef HTTP_SSL
++	if (!strncasecmp("https://", ptr, 8)) {
++		ptr += 8;
++		*ssl = 1;
++	} else
++		*ssl = 0;
++#endif
++	
+ 	h = strchr(ptr, '@');
+ 	f = strchr(ptr, '/');
+ 	if (h != NULL && (!f || h < f))
+@@ -159,7 +175,12 @@
+ 	{
+ 		if (f)
+ 			*f = '\0';
+-		*port = 80;
++#ifdef HTTP_SSL
++		if (*ssl)
++			*port = 443;
++		else
++#endif
++			*port = 80;
+ 	}
+ 	*host = g_strdup(h);
+ 	
+@@ -257,16 +278,27 @@
+ 	return FALSE;
+ }
+ 
++#ifdef HTTP_SSL
++gint vorbis_http_read_line(gchar * buf, gint size, SSL *ssl_c)
++#else
+ gint vorbis_http_read_line(gchar * buf, gint size)
++#endif
+ {
+-	gint i = 0;
++	gint i = 0, rc;
+ 
+ 	while (going && i < size - 1)
+ 	{
+ 		if (http_check_for_data())
+ 		{
+-			if (read(sock, buf + i, 1) <= 0)
+-				return -1;
++#ifdef HTTP_SSL
++                       if (ssl_c) {
++                               while ((rc = SSL_read(ssl_c, buf + i, 1)) == -1);
++                               if (rc <= 0)
++                                       return -1;
++                       } else
++#endif
++				if (read(sock, buf + i, 1) <= 0)
++					return -1;
+ 			if (buf[i] == '\n')
+ 				break;
+ 			if (buf[i] != '\r')
+@@ -296,6 +328,12 @@
+ 	struct sockaddr_in address;
+ #endif
+ 	struct timeval tv;
++#ifdef HTTP_SSL
++	SSL *ssl_c = NULL;
++	SSL_CTX *ssl_ctx = NULL;
++	BIO *b = NULL;
++	gint ssl=0;
++#endif
+ 
+ 	url = (gchar *) arg;
+ 	do
+@@ -304,7 +342,11 @@
+ 	
+ 		g_strstrip(url);
+ 
++#ifdef HTTP_SSL
++		parse_url(url, &user, &pass, &host, &port, &filename, &ssl);
++#else
+ 		parse_url(url, &user, &pass, &host, &port, &filename);
++#endif
+ 
+ 		if ((!filename || !*filename) && url[strlen(url) - 1] != '/')
+ 			temp = g_strconcat(url, "/", NULL);
+@@ -316,6 +358,26 @@
+ 		chost = vorbis_cfg.use_proxy ? vorbis_cfg.proxy_host : host;
+ 		cport = vorbis_cfg.use_proxy ? vorbis_cfg.proxy_port : port;
+ 
++#ifdef HTTP_SSL
++		if (ssl) {
++			SSL_library_init();
++			OpenSSL_add_ssl_algorithms();
++			SSL_load_error_strings();
++
++			ssl_ctx = SSL_CTX_new(SSLv23_client_method());
++			if (ssl_ctx == NULL) {
++				fprintf(stderr, "SSL_CTX_new() failed.");
++				eof = TRUE;
++			}
++
++			ssl_c = SSL_new(ssl_ctx);
++			if (ssl_c == NULL) {
++				fprintf(stderr, "SSL_new() failed.\n");
++				eof = TRUE;
++			}
++		}
++#endif
++
+ #ifdef USE_IPV6
+ 		g_snprintf(service, 6, "%d", cport);
+ 		memset(&hints, 0, sizeof(hints));
+@@ -394,6 +456,18 @@
+ 					eof = TRUE;
+ 				}
+ 			}
++#ifdef HTTP_SSL
++			if (ssl) {
++				b = BIO_new_socket(sock, BIO_NOCLOSE);
++				if (b == NULL) {
++					printf("BIO_new_socket() failed.\n");
++					eof = TRUE;
++				}
++
++				// cannot fail
++				SSL_set_bio(ssl_c, b, b);
++			}
++#endif
+ #endif
+ 			while (going)
+ 			{
+@@ -419,6 +493,24 @@
+ 					break;
+ 				}
+ 			}
++#ifdef HTTP_SSL
++			if (ssl) {
++				int rc;
++
++				SSL_set_connect_state(ssl_c);
++
++				while ((rc = SSL_connect(ssl_c)) == -1);
++				if (rc <= 0) {
++					fprintf(stderr, "SSL_connect() error. SSL error code: %d.\n",
++							SSL_get_error(ssl_c, rc));
++				}
++				while ((rc = SSL_do_handshake(ssl_c)) == -1);
++				if (rc <= 0) {
++					fprintf(stderr, "SSL_do_handshake() error. SSL error code: %d.\n",
++							SSL_get_error(ssl_c, rc));
++				}
++			}
++#endif
+ 			if (!eof)
+ 			{
+ 				gchar *auth = NULL, *proxy_auth = NULL;
+@@ -449,14 +541,30 @@
+ 					g_free(proxy_auth);
+ 				if(auth)
+ 					g_free(auth);
+-				write(sock, temp, strlen(temp));
++#ifdef HTTP_SSL
++				if (ssl) {
++					int rc;
++					while ((rc = SSL_write(ssl_c, temp, strlen(temp))) == -1);
++					if (rc <= 0) {
++						fprintf(stderr, "SSL_write() error. SSL error code: %d.\n",
++								SSL_get_error(ssl_c, rc));
++						eof = TRUE;
++					}
++				} else
++#endif
++					write(sock, temp, strlen(temp));
++
+ 				g_free(temp);
+ 				vorbis_ip.set_info_text(_("CONNECTED: WAITING FOR REPLY"));
+ 				while (going && !eof)
+ 				  {
+ 					if (http_check_for_data())
+ 					{
++#ifdef HTTP_SSL
++						if (vorbis_http_read_line(line, 1024, ssl_c))
++#else
+ 						if (vorbis_http_read_line(line, 1024))
++#endif
+ 						{
+ 							status = strchr(line, ' ');
+ 							if (status)
+@@ -469,7 +577,11 @@
+ 									{
+ 										if(http_check_for_data())
+ 										{
++#ifdef HTTP_SSL
++											if((cnt = vorbis_http_read_line(line, 1024, ssl_c)) != -1)
++#else
+ 											if((cnt = vorbis_http_read_line(line, 1024)) != -1)
++#endif
+ 											{
+ 												if(!cnt)
+ 													break;
+@@ -511,7 +623,11 @@
+ 				{
+ 					if (http_check_for_data())
+ 					{
++#ifdef HTTP_SSL
++						if ((cnt = vorbis_http_read_line(line, 1024, ssl_c)) != -1)
++#else
+ 						if ((cnt = vorbis_http_read_line(line, 1024)) != -1)
++#endif
+ 						{
+ 							if (!cnt)
+ 								break;
+@@ -537,6 +653,10 @@
+ 				fclose(output_file);
+ 				output_file = NULL;
+ 			}
++#ifdef HTTP_SSL
++			if (ssl)
++				SSL_shutdown(ssl_c);
++#endif
+ 			close(sock);
+ 			g_free(user);
+ 			g_free(pass);
+@@ -554,6 +674,9 @@
+ 		fname = file;
+ 		if (!strncasecmp(fname, "http://", 7))
+ 			fname += 7;
++ 		if (!strncasecmp(fname, "https://", 8))
++ 			fname += 8;
++
+ 		temp = strrchr(fname, '.');
+ 		if (temp && !strcasecmp(temp, ".ogg"))
+ 			*temp = '\0';
+@@ -588,7 +711,12 @@
+ 				cnt = min(http_free(), buffer_length - wr_index);
+ 				if (cnt > 1024)
+ 					cnt = 1024;
+-				written = read(sock, buffer + wr_index, cnt);
++#ifdef HTTP_SSL
++				if (ssl)
++					while ((written = SSL_read(ssl_c, buffer + wr_index, cnt)) == -1);
++				else
++#endif
++					written = read(sock, buffer + wr_index, cnt);
+ 				if (written <= 0)
+ 				{
+ 					eof = TRUE;
+@@ -629,6 +757,10 @@
+ 		fclose(output_file);
+ 		output_file = NULL;
+ 	}
++#ifdef HTTP_SSL
++	if (ssl)
++		SSL_shutdown(ssl_c);
++#endif
+ 	close(sock);
+ 
+ 
+diff -dPNur xmms-1.2.11/Input/vorbis/vorbis.c xmms-1.2.11-new/Input/vorbis/vorbis.c
+--- xmms-1.2.11/Input/vorbis/vorbis.c	2006-07-16 15:40:04.000000000 +0200
++++ xmms-1.2.11-new/Input/vorbis/vorbis.c	2007-11-25 00:00:09.000000000 +0100
+@@ -138,7 +138,12 @@
+ 	char *ext;
+ 
+ 	/* is this our http resource? */
++#ifdef HTTP_SSL
++	if (strncasecmp(filename, "http://", 7) == 0 || 
++	    strncasecmp(filename, "https://", 8) == 0) {
++#else
+ 	if (strncasecmp(filename, "http://", 7) == 0) {
++#endif
+ 		ext = strrchr(filename, '.');
+ 		if (ext) {
+ 			if (!strncasecmp(ext, ".ogg", 4)) {
+@@ -332,7 +337,12 @@
+ 
+ 	memset(&vf, 0, sizeof(vf));
+ 
++#ifdef HTTP_SSL
++	if (strncasecmp("http://", filename, 7) && 
++	    strncasecmp("https://", filename, 8)) {
++#else
+ 	if (strncasecmp("http://", filename, 7) != 0) {
++#endif
+ 		/* file is a real file */
+ 		if ((stream = fopen(filename, "r")) == NULL) {
+ 			vorbis_eos = TRUE;
+@@ -536,7 +546,12 @@
+ 	FILE *stream;
+ 	OggVorbis_File vf; /* avoid thread interaction */
+ 	
++#ifdef HTTP_SSL
++	if (strncasecmp(filename, "http://", 7) && 
++	    strncasecmp(filename, "https://", 8)) {
++#else
+ 	if (strncasecmp(filename, "http://", 7)) {
++#endif
+ 		if ((stream = fopen(filename, "r")) == NULL)
+ 			return;
+    

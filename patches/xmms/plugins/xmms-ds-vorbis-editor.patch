@@ -1,0 +1,51 @@
+diff -dPNur xmms-1.2.11/Input/vorbis/fileinfo.c xmms-1.2.11-new/Input/vorbis/fileinfo.c
+--- xmms-1.2.11/Input/vorbis/fileinfo.c	2007-11-25 00:04:27.000000000 +0100
++++ xmms-1.2.11-new/Input/vorbis/fileinfo.c	2007-11-25 01:20:57.000000000 +0100
+@@ -34,6 +34,7 @@
+ #include <vorbis/codec.h>
+ #include <vorbis/vorbisfile.h>
+ 
++#include "libxmms/rcc.h"
+ #include "libxmms/util.h"
+ #include "libxmms/charset.h"
+ #include <xmms/i18n.h>
+@@ -451,6 +452,7 @@
+ 	char *description, *version, *isrc, *copyright, *organization;
+ 	char *location, *vendor = "N/A";
+ 	char *rg_track_gain, *rg_album_gain, *rg_track_peak, *rg_album_peak;
++ 	gchar *cfilename;
+ 
+ 	int time, minutes, seconds, bitrate, avgbitrate, rate, channels;
+ 	int filesize, i;
+@@ -931,6 +933,11 @@
+ 	gtk_entry_set_text(GTK_ENTRY(isrc_entry), isrc);
+ 	gtk_entry_set_text(GTK_ENTRY(location_entry), location);
+ #endif
++	cfilename = xmms_rcc_recode(XMMS_RCC_FS, XMMS_RCC_CTYPE, vte.filename);
++	if (cfilename) {
++	    gtk_entry_set_text(GTK_ENTRY(filename_entry), cfilename);
++	    g_free(cfilename);
++	} else
+ 	gtk_entry_set_text(GTK_ENTRY(filename_entry), vte.filename);
+ 	gtk_editable_set_position(GTK_EDITABLE(filename_entry), -1);
+ 
+diff -dPNur xmms-1.2.11/Input/vorbis/vorbis.c xmms-1.2.11-new/Input/vorbis/vorbis.c
+--- xmms-1.2.11/Input/vorbis/vorbis.c	2007-11-25 00:04:27.000000000 +0100
++++ xmms-1.2.11-new/Input/vorbis/vorbis.c	2007-11-25 01:20:57.000000000 +0100
+@@ -46,6 +46,7 @@
+ #include "xmms/plugin.h"
+ #include "libxmms/util.h"
+ #include "libxmms/configfile.h"
++#include "libxmms/rcc.h"
+ #include "libxmms/titlestring.h"
+ #include "libxmms/charset.h"
+ #include <xmms/i18n.h>
+@@ -754,6 +755,8 @@
+ 		if (!vorbis_is_streaming)
+ 		{
+ 			char *tmp;
++    			displaytitle = xmms_rcc_recode(XMMS_RCC_FS, XMMS_RCC_OUT, g_basename(fn));
++			if (!displaytitle)
+ 			displaytitle = g_strdup(g_basename(fn));
+ 			if ((tmp = strrchr(displaytitle, '.')) != NULL)
+ 				*tmp = '\0';

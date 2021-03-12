@@ -1,0 +1,13 @@
+Difference between 'rusxmms' and 'rusxmms-full' patches is following. The full patche besides makefile.machine fixes all
+other architecure-oss specific make files. The 'rusxmms' patch does not. However, you could execute following commands
+to have all makefiles adjusted.
+
+find . -maxdepth 1 -name "makefile.linux*" -print0 | xargs -0 sed -i -e "s/LOCAL_LIBS=-lpthread/LOCAL_LIBS=-lpthread -lrcc/"
+find . -maxdepth 1 -name "makefile.machine" -print0 | xargs -0 sed -i -e "s/LOCAL_LIBS=-lpthread/LOCAL_LIBS=-lpthread -lrcc/"
+
+
+Configuration
+=============
+ - The patch uses "zip" configuration of RCC. This means settings could be 
+ altered using "rcc-gtk2-config zip". 
+ - ZIP OEM / Output  - encodings are important for patch.

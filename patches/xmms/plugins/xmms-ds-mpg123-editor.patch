@@ -1,0 +1,202 @@
+diff -dPNur xmms-1.2.10/Input/mpg123/fileinfo.c xmms-1.2.10-new/Input/mpg123/fileinfo.c
+--- rusxmms/Input/mpg123/fileinfo.c	2005-07-17 01:54:55.000000000 +0200
++++ rusxmms-new/Input/mpg123/fileinfo.c	2005-07-17 11:46:05.000000000 +0200
+@@ -24,6 +24,7 @@
+ #include <string.h>
+ #include <errno.h>
+ #include <libxmms/xentry.h>
++#include <libxmms/rcc.h>
+ #include <gdk/gdkkeysyms.h>
+ #include "mpg123.h"
+ 
+@@ -60,19 +61,33 @@
+ 
+ static void set_entry_tag_v1(GtkEntry * entry, const char * tag, int length)
+ {
+-	char *text = g_strchomp(g_strndup(tag, length));
++	char *text;
++
++        text = xmms_rcc_sized_recode(XMMS_RCC_ID3, XMMS_RCC_CTYPE, tag, length);
++	if (!text) text = g_strchomp(g_strndup(tag, length));
++
+ 	gtk_entry_set_text(entry, text);
+ 	g_free(text);
+ }
+ 
+ static void get_entry_tag_v1(GtkEntry * entry, char * tag, int length)
+ {
++	gchar *ctext;
++
++	ctext = xmms_rcc_recode(XMMS_RCC_CTYPE, XMMS_RCC_ID3, gtk_entry_get_text(entry));
++
++	if (ctext) {
++	    strncpy(tag, ctext, length);
++	    free(ctext);
++	} else
+ 	strncpy(tag, gtk_entry_get_text(entry), length);
+ }
+ 
+ void copy_entry_tag_v1(GtkEntry * src, GtkEntry * dest, int length)
+ {
+-	set_entry_tag_v1(dest, gtk_entry_get_text(src), length);
++	char *text = g_strchomp(g_strndup(gtk_entry_get_text(src), length));
++	gtk_entry_set_text(dest, text);
++	g_free(text);
+ 	return;
+ }
+ 
+@@ -497,6 +512,7 @@
+ 	int i;
+ 	struct id3v1tag_t id3v1tag;
+ 	FILE *fh;
++	gchar *cfilename;
+ 	char *tmp, *title;
+ 	const char *emphasis[4];
+ 	const char *bool_label[2];
+@@ -908,6 +924,9 @@
+ 		g_free(current_filename);
+ 	current_filename = g_strdup(filename);
+ 
++	cfilename = xmms_rcc_recode(XMMS_RCC_FS, XMMS_RCC_OUT, filename);
++	if (cfilename) filename=cfilename;
++
+ 	title = g_strdup_printf(_("File Info - %s"), g_basename(filename));
+ 	gtk_window_set_title(GTK_WINDOW(window), title);
+ 	g_free(title);
+@@ -922,6 +941,8 @@
+ 	gtk_entry_set_text(GTK_ENTRY(v2_title_entry), title);
+ 	g_free(title);
+ 
++	if (cfilename) g_free(cfilename);
++
+ 	gtk_entry_set_text(GTK_ENTRY(v1_artist_entry), "");
+ 	gtk_entry_set_text(GTK_ENTRY(v1_album_entry), "");
+ 	gtk_entry_set_text(GTK_ENTRY(v1_year_entry), "");
+diff -dPNur xmms-1.2.10/Input/mpg123/id3_frame_text.c xmms-1.2.10-new/Input/mpg123/id3_frame_text.c
+--- xmms-1.2.10/Input/mpg123/id3_frame_text.c	2005-08-10 03:20:03.000000000 +0200
++++ xmms-1.2.10-new/Input/mpg123/id3_frame_text.c	2005-08-10 03:29:40.000000000 +0200
+@@ -28,6 +28,7 @@
+ #include "id3_header.h"
+ 
+ #include "libxmms/charset.h"
++#include "libxmms/rcc.h"
+ 
+ /* For extern mpg123_cfg */
+ #include "mpg123.h"
+@@ -247,6 +248,9 @@
+  */
+ int id3_set_text(struct id3_frame *frame, char *text)
+ {
++	char *ctext;
++	gint8 encoding;
++
+ 	/* Type check */
+ 	if (frame->fr_desc->fd_idstr[0] != 'T')
+ 		return -1;
+@@ -256,18 +260,36 @@
+ 	 */
+ 	id3_frame_clear_data(frame);
+ 
++
++	/*
++	 * Recoding.
++	 */
++	 encoding = (gint8)xmms_rcc_get_id3v2_encoding();
++	 if (encoding == ID3_ENCODING_ISO_8859_1) ctext = xmms_rcc_recode(XMMS_RCC_CTYPE, XMMS_RCC_ID3V2, text);
++	 else if (encoding == ID3_ENCODING_UTF8) ctext = xmms_charset_to_utf8(text);
++	 else if (encoding == ID3_ENCODING_UTF16) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16");
++	 else if (encoding == ID3_ENCODING_UTF16BE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16BE");
++	 else ctext = NULL;
++
++	if (ctext) text = ctext;
++
+ 	/*
+ 	 * Allocate memory for new data.
+ 	 */
++	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE))
++		frame->fr_raw_size = utf16_strlen(text) + 2;
++	else
+ 	frame->fr_raw_size = strlen(text) + 1;
+ 	frame->fr_raw_data = g_malloc(frame->fr_raw_size + 1);
+ 
+ 	/*
+ 	 * Copy contents.
+ 	 */
+-	*(gint8 *) frame->fr_raw_data = ID3_ENCODING_ISO_8859_1;
++	*(gint8 *) frame->fr_raw_data =  encoding;
+ 	memcpy((char *) frame->fr_raw_data + 1, text, frame->fr_raw_size);
+ 
++	if (ctext) free(ctext);
++
+ 	frame->fr_altered = 1;
+ 	frame->fr_owner->id3_altered = 1;
+ 
+@@ -389,7 +411,10 @@
+  */
+ int id3_set_comment(struct id3_frame *frame, char *text)
+ {
++	char *ctext, *cdata;
++	const char *lang;
+ 	int *intp;
++	gint8 encoding;
+ 
+ 	/* Type check */
+ 	if (frame->fr_desc->fd_id != ID3_COMM)
+@@ -401,8 +426,23 @@
+ 	id3_frame_clear_data(frame);
+ 
+ 	/*
++	 * Recoding.
++	 */
++	 encoding = (gint8)xmms_rcc_get_id3v2_encoding();
++	 if (encoding == ID3_ENCODING_ISO_8859_1) ctext = xmms_rcc_recode(XMMS_RCC_CTYPE, XMMS_RCC_ID3V2, text);
++	 else if (encoding == ID3_ENCODING_UTF8) ctext = xmms_charset_to_utf8(text);
++	 else if (encoding == ID3_ENCODING_UTF16) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16");
++	 else if (encoding == ID3_ENCODING_UTF16BE) ctext = xmms_charset_convert(text, strlen(text), NULL, "UTF-16BE");
++	 else ctext = NULL;
++	
++	if (ctext) text = ctext;
++
++	/*
+ 	 * Allocate memory for new data.
+ 	 */
++	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE))
++		frame->fr_raw_size = 25 + utf16_strlen(text);
++	else
+ 	frame->fr_raw_size = 13 + strlen(text);
+ 	frame->fr_raw_data = g_malloc(frame->fr_raw_size + 1); /* <encode>XXXComments\0<comment><\0>
+ 
+@@ -410,18 +450,29 @@
+ 	 * block, so don't waste time with a calloc()
+ 	 */
+ 
+-	((guint8 *)frame->fr_raw_data)[0] = ID3_ENCODING_ISO_8859_1;
+-	((guint8 *)frame->fr_raw_data)[1] = 0x58;
+-	((guint8 *)frame->fr_raw_data)[2] = 0x58;
+-	((guint8 *)frame->fr_raw_data)[3] = 0x58;
++	*(gint8 *) frame->fr_raw_data =  encoding;
++	memcpy((char*)frame->fr_raw_data + 1, xmms_rcc_get_language(), 3);
+ 
++	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE)) {
++	    int i;
++	    lang = "Comments";
++	    if (encoding == ID3_ENCODING_UTF16) cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16");
++	    else cdata = xmms_charset_convert(lang, strlen(lang), NULL, "UTF-16BE");
++	    memcpy((char *) frame->fr_raw_data + 4, cdata, 20);
++	    g_free(cdata);
++	} else
+ 	memcpy((char *) frame->fr_raw_data + 4, "Comments", 9);
+ 
+ 	/*
+ 	 * Copy contents.
+ 	 */
++	if ((encoding == ID3_ENCODING_UTF16)||(encoding == ID3_ENCODING_UTF16BE))
++	    memcpy((char *) frame->fr_raw_data + 24, text, utf16_strlen(text) + 2);
++	else
+ 	memcpy((char *) frame->fr_raw_data + 13, text, strlen(text) + 1);
+ 
++	if (ctext) free(ctext);
++
+ 	frame->fr_altered = 1;
+ 	frame->fr_owner->id3_altered = 1;
+ 

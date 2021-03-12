@@ -1,0 +1,41 @@
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2007-11-24 23:53:33.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-24 23:55:43.000000000 +0100
+@@ -2,6 +2,7 @@
+ #include "id3_header.h"
+ #include "libxmms/configfile.h"
+ #include "libxmms/titlestring.h"
++#include "libxmms/charset.h"
+ #include <string.h>
+ #include <stdlib.h>
+ #include <pthread.h>
+@@ -400,6 +401,14 @@
+ 	return ext;
+ }
+ 
++static char *convert_id3v1_field(const char *v1field, unsigned len)
++{
++	char *tmp = g_strndup(v1field, len);
++	char *v2field = xmms_charset_from_latin1(g_strstrip(tmp));
++	g_free(tmp);
++	return v2field;
++}
++
+ /*
+  * Function id3v1_to_id3v2 (v1, v2)
+  *
+@@ -411,10 +420,10 @@
+ 	char *year;
+ 	struct id3v2tag_t *v2 = g_malloc0(sizeof (struct id3v2tag_t));
+ 
+-	v2->title = g_strstrip(g_strndup(v1->title, 30));
+-	v2->artist = g_strstrip(g_strndup(v1->artist, 30));
+-	v2->album = g_strstrip(g_strndup(v1->album, 30));
+-	v2->comment = g_strstrip(g_strndup(v1->u.v1_0.comment, 30));
++ 	v2->title = convert_id3v1_field(v1->title, 30);
++ 	v2->artist = convert_id3v1_field(v1->artist, 30);
++ 	v2->album = convert_id3v1_field(v1->album, 30);
++ 	v2->comment = convert_id3v1_field(v1->u.v1_0.comment, 30);
+ 	v2->genre = g_strstrip(g_strdup(mpg123_get_id3_genre(v1->genre)));
+ 	
+ 	year = g_strndup(v1->year, 4);

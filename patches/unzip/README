@@ -1,0 +1,30 @@
+You can use patch in two modes:
+    standard: The unzip will be dynamically linked with librcc (In that case
+    some problems with building OpenOffice from sources may arise)
+    
+    lazy: In this case the librcc will be dynamically loaded (with help of
+    dlopen, dlsym) during execution.
+    
+
+Usage
+=====
+1. Apply patches: unzip-*-ds-rusxmms.patch, unzip-ds-unixenc.patch
+2. In the root of `unzip` source tree run either `update_shared` for standard
+mode or `update_lazy` for lazy mode.
+
+
+Configuration
+=============
+ - The patch uses "zip" configuration of RCC. This means settings could be 
+ altered using "rcc-gtk2-config zip". 
+ - ZIP OEM / ZIP ISO / Output  - encodings are important for patch.
+
+
+Build
+=====
+ On Unix, call following command to get list of possible targets:
+     make -f unix/Makefile list
+ and then just build with:
+    make -f unix/Makefile <target>
+ for example:
+     make -f unix/Makefile linux_noasm

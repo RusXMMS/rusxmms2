@@ -1,0 +1,2247 @@
+diff -dPNur xmms-1.2.11/Input/mpg123/common.c xmms-1.2.11-new/Input/mpg123/common.c
+--- xmms-1.2.11/Input/mpg123/common.c	2007-11-24 23:53:33.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/common.c	2007-11-24 23:58:41.000000000 +0100
+@@ -303,8 +303,8 @@
+ 		mpg123_id3v2_destroy(tag);
+ 		id3_close(id3d);
+ 	}
+-	g_free(id3buf);
+ 
++	g_free(id3buf);
+ 	return TRUE;
+ }
+ 
+diff -dPNur xmms-1.2.11/Input/mpg123/fileinfo.c xmms-1.2.11-new/Input/mpg123/fileinfo.c
+--- xmms-1.2.11/Input/mpg123/fileinfo.c	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/fileinfo.c	2007-11-24 23:58:41.000000000 +0100
+@@ -27,42 +27,96 @@
+ #include <gdk/gdkkeysyms.h>
+ #include "mpg123.h"
+ 
++#define MAX_STR_LEN 100
++#define MAX_ENTRY_LEN2 1023
++
+ static GtkWidget *window = NULL;
+-static GtkWidget *filename_entry, *id3_frame;
+-static GtkWidget *title_entry, *artist_entry, *album_entry, *year_entry;
+-static GtkWidget *tracknum_entry, *comment_entry, *genre_combo;
++static GtkWidget *notebook = NULL;
++static GtkWidget *filename_entry, *id3v1_frame, *id3v2_frame;
++static GtkWidget *v1_checkbox, *v2_checkbox;
++static GtkWidget *v1_title_entry, *v1_artist_entry, *v1_album_entry, *v1_year_entry, *v1_tracknum_entry, *v1_comment_entry;
++static GtkWidget *v2_title_entry, *v2_artist_entry, *v2_album_entry, *v2_year_entry, *v2_tracknum_entry, *v2_comment_entry,
++				 *v2_composer_entry, *v2_orig_artist_entry, *v2_url_entry, *v2_encoded_by_entry;
++static GtkWidget *v1_genre_combo, *v2_genre_combo;
+ static GtkWidget *mpeg_level, *mpeg_bitrate, *mpeg_samplerate, *mpeg_flags;
+ static GtkWidget *mpeg_fileinfo;
+ 
++static GPtrArray *v1_labels_list = NULL, *v2_labels_list = NULL;    // TODO: Where will these be freed?
+ static GList *genre_list;
+ struct genre_item {
+ 	const char *name;
+ 	int id;
+ };
+-static int current_genre;
++static int v1_current_genre;
++static int v2_current_genre;
+ static char *current_filename;
+ 
+ extern char *mpg123_filename;
+ extern int mpg123_bitrate, mpg123_frequency, mpg123_layer, mpg123_lsf, mpg123_mode;
+ extern gboolean mpg123_stereo, mpg123_mpeg25;
+ 
+-#define MAX_STR_LEN 100
+-
+-static void label_set_text(GtkWidget * label, char *str, ...)
++static void label_set_text(GtkWidget * label, const char *str, ...)
+ G_GNUC_PRINTF(2, 3);
+ 
+-static void set_entry_tag(GtkEntry * entry, char * tag, int length)
++static void set_entry_tag_v1(GtkEntry * entry, const char * tag, int length)
+ {
+ 	char *text = g_strchomp(g_strndup(tag, length));
+ 	gtk_entry_set_text(entry, text);
+ 	g_free(text);
+ }
+ 
+-static void get_entry_tag(GtkEntry * entry, char * tag, int length)
++static void get_entry_tag_v1(GtkEntry * entry, char * tag, int length)
+ {
+ 	strncpy(tag, gtk_entry_get_text(entry), length);
+ }
+ 
++void copy_entry_tag_v1(GtkEntry * src, GtkEntry * dest, int length)
++{
++	set_entry_tag_v1(dest, gtk_entry_get_text(src), length);
++	return;
++}
++
++static void set_entry_tag_v2(GtkEntry * entry, struct id3_tag* id3, guint32 frame_type)
++{
++	struct id3_frame* frame;
++
++	frame = id3_get_frame(id3, frame_type, 1);
++	if (frame != NULL)
++	{
++		char *text, *url, *comment;
++
++		text = id3_get_text(frame);
++		if (text != NULL)
++		{
++			gtk_entry_set_text(entry, text);
++			g_free(text);
++			return;
++		}
++
++		url = id3_get_url(frame);
++		if (url != NULL)
++		{
++			gtk_entry_set_text(entry, url);
++			g_free(url);
++			return;
++		}
++
++		comment = id3_get_comment(frame);
++		if (comment != NULL)
++		{
++			gtk_entry_set_text(entry, comment);
++			g_free(url);
++			return;
++		}
++	}
++}
++
++void copy_entry_tag_v2(GtkEntry * src, GtkEntry * dest)
++{
++	gtk_entry_set_text(dest, gtk_entry_get_text(src));
++	return;
++}
++
+ static int genre_find_index(GList *genre_list, int id)
+ {
+ 	int idx = 0;
+@@ -74,6 +128,24 @@
+ 		idx++;
+ 		genre_list = genre_list->next;
+ 	}
++	if (!genre_list)
++		return 0;
++	return idx;
++}
++
++static int genre_find_index_str(GList *genre_list, const char* str)
++{
++	int idx = 0;
++	while (genre_list)
++	{
++		struct genre_item *item = genre_list->data;
++		if (strcmp(item->name, str) == 0)
++			break;
++		idx++;
++		genre_list = genre_list->next;
++	}
++	if (!genre_list)
++		return 0;
+ 	return idx;
+ }
+ 
+@@ -83,9 +155,9 @@
+ 	return strcasecmp(ga->name, gb->name);
+ }
+ 
+-static void save_cb(GtkWidget * w, gpointer data)
++static void remove_id3v1(void)
+ {
+-	int fd;
++	int fd, len;
+ 	struct id3v1tag_t tag;
+ 	char *msg = NULL;
+ 
+@@ -94,71 +166,36 @@
+ 
+ 	if ((fd = open(current_filename, O_RDWR)) != -1)
+ 	{
+-		int tracknum;
+-
+-		lseek(fd, -128, SEEK_END);
++		len = lseek(fd, -128, SEEK_END);
+ 		read(fd, &tag, sizeof (struct id3v1tag_t));
+ 
+ 		if (!strncmp(tag.tag, "TAG", 3))
+-			lseek(fd, -128, SEEK_END);
+-		else
+-			lseek(fd, 0, SEEK_END);
+-		tag.tag[0] = 'T';
+-		tag.tag[1] = 'A';
+-		tag.tag[2] = 'G';
+-		get_entry_tag(GTK_ENTRY(title_entry), tag.title, 30);
+-		get_entry_tag(GTK_ENTRY(artist_entry), tag.artist, 30);
+-		get_entry_tag(GTK_ENTRY(album_entry), tag.album, 30);
+-		get_entry_tag(GTK_ENTRY(year_entry), tag.year, 4);
+-		tracknum = atoi(gtk_entry_get_text(GTK_ENTRY(tracknum_entry)));
+-		if (tracknum > 0)
+ 		{
+-			get_entry_tag(GTK_ENTRY(comment_entry),
+-				      tag.u.v1_1.comment, 28);
+-			tag.u.v1_1.__zero = 0;
+-			tag.u.v1_1.track_number = MIN(tracknum, 255);
++			if (ftruncate(fd, len))
++				msg = g_strdup_printf(_("%s\n"
++							"Unable to truncate file: %s"),
++						      _("Couldn't remove tag!"),
++						      strerror(errno));
+ 		}
+-		else
+-			get_entry_tag(GTK_ENTRY(comment_entry),
+-				      tag.u.v1_0.comment, 30);
+-		tag.genre = current_genre;
+-		if (write(fd, &tag, sizeof (tag)) != sizeof (tag))
+-			msg = g_strdup_printf(_("%s\nUnable to write to file: %s"),
+-					      _("Couldn't write tag!"),
+-					      strerror(errno));
+ 		close(fd);
+ 	}
+ 	else
+ 		msg = g_strdup_printf(_("%s\nUnable to open file: %s"),
+-				      _("Couldn't write tag!"),
++				      _("Couldn't remove tag!"),
+ 				      strerror(errno));
+ 	if (msg)
+ 	{
+-		GtkWidget *mwin = xmms_show_message(_("File Info"), msg,
+-						    _("OK"), FALSE, NULL, NULL);
++		GtkWidget *mwin = xmms_show_message(_("File Info"), msg, _("OK"),
++						    FALSE, NULL, NULL);
+ 		gtk_window_set_transient_for(GTK_WINDOW(mwin),
+ 					     GTK_WINDOW(window));
+ 		g_free(msg);
+ 	}
+-	else
+-		gtk_widget_destroy(window);
+-}
+-
+-static void label_set_text(GtkWidget * label, char *str, ...)
+-{
+-	va_list args;
+-	char tempstr[MAX_STR_LEN];
+-
+-	va_start(args, str);
+-	g_vsnprintf(tempstr, MAX_STR_LEN, str, args);
+-	va_end(args);
+-
+-	gtk_label_set_text(GTK_LABEL(label), tempstr);
+ }
+ 
+-static void remove_id3_cb(GtkWidget * w, gpointer data)
++static void save_cb(GtkWidget * w, gpointer data)
+ {
+-	int fd, len;
++	int fd;
+ 	struct id3v1tag_t tag;
+ 	char *msg = NULL;
+ 
+@@ -167,36 +204,112 @@
+ 
+ 	if ((fd = open(current_filename, O_RDWR)) != -1)
+ 	{
+-		len = lseek(fd, -128, SEEK_END);
+-		read(fd, &tag, sizeof (struct id3v1tag_t));
++		if (!GTK_TOGGLE_BUTTON(v1_checkbox)->active) {
++			/* Try to save id3v1 tag */
++			int tracknum;
+ 
+-		if (!strncmp(tag.tag, "TAG", 3))
+-		{
+-			if (ftruncate(fd, len))
+-				msg = g_strdup_printf(
+-					_("%s\n"
+-					  "Unable to truncate file: %s"),
+-					_("Couldn't remove tag!"),
+-					strerror(errno));
++			lseek(fd, -128, SEEK_END);
++			read(fd, &tag, sizeof (struct id3v1tag_t));
++
++			if (!strncmp(tag.tag, "TAG", 3))
++				lseek(fd, -128, SEEK_END);
++			else
++				lseek(fd, 0, SEEK_END);
++			tag.tag[0] = 'T';
++			tag.tag[1] = 'A';
++			tag.tag[2] = 'G';
++			get_entry_tag_v1(GTK_ENTRY(v1_title_entry), tag.title, 30);
++			get_entry_tag_v1(GTK_ENTRY(v1_artist_entry), tag.artist, 30);
++			get_entry_tag_v1(GTK_ENTRY(v1_album_entry), tag.album, 30);
++			get_entry_tag_v1(GTK_ENTRY(v1_year_entry), tag.year, 4);
++			tracknum = atoi(gtk_entry_get_text(GTK_ENTRY(v1_tracknum_entry)));
++			if (tracknum > 0)
++			{
++				get_entry_tag_v1(GTK_ENTRY(v1_comment_entry), tag.u.v1_1.comment, 28);
++				tag.u.v1_1.__zero = 0;
++				tag.u.v1_1.track_number = MIN(tracknum, 255);
++			}
++			else
++				get_entry_tag_v1(GTK_ENTRY(v1_comment_entry),
++                        tag.u.v1_0.comment, 30);
++			tag.genre = v1_current_genre;
++			if (write(fd, &tag, sizeof (tag)) != sizeof (tag))
++				msg = g_strdup_printf(_("%s\nUnable to write to file: %s"),
++				                      _("Couldn't write tag!"),
++					              strerror(errno));
++		} else {
++			/* Remove the id3v1 tag from the file */
++			remove_id3v1();
+ 		}
+-		else
+-			msg = strdup(_("No tag to remove!"));
+-		close(fd);
++
++		if (!GTK_TOGGLE_BUTTON(v2_checkbox)->active) {
++		        struct id3_tag* id3;
++
++			lseek(fd, SEEK_SET, 0);
++		        id3 = id3_open_fd(fd, 0);
++		        if (id3 == NULL)
++		           id3 = id3_new();
++
++		        if (id3 != NULL)
++		        {
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TIT2), gtk_entry_get_text(GTK_ENTRY(v2_title_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TPE1), gtk_entry_get_text(GTK_ENTRY(v2_artist_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TALB), gtk_entry_get_text(GTK_ENTRY(v2_album_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TYER), gtk_entry_get_text(GTK_ENTRY(v2_year_entry)));
++				id3_set_comment(id3_get_or_add_frame(id3, ID3_COMM), gtk_entry_get_text(GTK_ENTRY(v2_comment_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TRCK), gtk_entry_get_text(GTK_ENTRY(v2_tracknum_entry)));
++				if (v2_current_genre != 0xff)
++				{
++					/* Essentially the same behavior as Winamp2's ID3v2 tagger */
++					char genre[255];
++					snprintf(genre, sizeof(genre), "(%d)%s",
++					         v2_current_genre,
++					         gtk_entry_get_text(GTK_ENTRY(GTK_COMBO(v2_genre_combo)->entry)));
++					id3_set_text(id3_get_or_add_frame(id3, ID3_TCON), genre);
++				}
++				else
++				{
++					id3_set_text(id3_get_or_add_frame(id3, ID3_TCON), gtk_entry_get_text(GTK_ENTRY(GTK_COMBO(v2_genre_combo)->entry)));
++				}
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TCOM), gtk_entry_get_text(GTK_ENTRY(v2_composer_entry)));
++				id3_set_url(id3_get_or_add_frame(id3, ID3_WCOM), gtk_entry_get_text(GTK_ENTRY(v2_url_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TOPE), gtk_entry_get_text(GTK_ENTRY(v2_orig_artist_entry)));
++				id3_set_text(id3_get_or_add_frame(id3, ID3_TENC), gtk_entry_get_text(GTK_ENTRY(v2_encoded_by_entry)));
++
++				id3_write_tag_filename(id3, current_filename);
++			}
++
++		} else {
++			id3_remove_tag_filename(current_filename);
++		}
++
++		if (fd)
++			close(fd);
+ 	}
+ 	else
+ 		msg = g_strdup_printf(_("%s\nUnable to open file: %s"),
+-				      _("Couldn't remove tag!"),
++				      _("Couldn't write tag!"),
+ 				      strerror(errno));
+ 	if (msg)
+ 	{
+-		GtkWidget *mwin = xmms_show_message(_("File Info"), msg,
+-						    _("OK"), FALSE, NULL, NULL);
++		GtkWidget *mwin = xmms_show_message(_("File Info"), msg, _("OK"),
++						    FALSE, NULL, NULL);
+ 		gtk_window_set_transient_for(GTK_WINDOW(mwin),
+ 					     GTK_WINDOW(window));
+ 		g_free(msg);
+ 	}
+-	else
+-		gtk_widget_destroy(window);
++}
++
++static void label_set_text(GtkWidget * label, const char *str, ...)
++{
++	va_list args;
++	char tempstr[MAX_STR_LEN];
++
++	va_start(args, str);
++	g_vsnprintf(tempstr, MAX_STR_LEN, str, args);
++	va_end(args);
++
++	gtk_label_set_text(GTK_LABEL(label), tempstr);
+ }
+ 
+ static void set_mpeg_level_label(gboolean mpeg25, int lsf, int layer)
+@@ -219,28 +332,141 @@
+ 
+ static void file_info_http(char *filename)
+ {
+-	gtk_widget_set_sensitive(id3_frame, FALSE);
++	gtk_widget_set_sensitive(id3v1_frame, FALSE);
++	gtk_widget_set_sensitive(id3v2_frame, FALSE);
+ 	if (mpg123_filename && !strcmp(filename, mpg123_filename) &&
+ 	    mpg123_bitrate != 0)
+ 	{
+-		set_mpeg_level_label(mpg123_mpeg25, mpg123_lsf, mpg123_layer);
++		set_mpeg_level_label(mpg123_mpeg25, mpg123_lsf,
++                mpg123_layer);
+ 		label_set_text(mpeg_bitrate, _("Bitrate: %d kb/s"),
+-			       mpg123_bitrate);
++                mpg123_bitrate);
+ 		label_set_text(mpeg_samplerate, _("Samplerate: %d Hz"),
+-			       mpg123_frequency);
++                mpg123_frequency);
+ 		label_set_text(mpeg_flags, "%s",
+-			       channel_mode_name(mpg123_mode));
++                channel_mode_name(mpg123_mode));
+ 	}
+ }
+ 
+-static void genre_selected(GtkList *list, GtkWidget *w, gpointer data)
++void copy_v2_to_v1_cb(GtkButton *button, gpointer user_data)
++{
++    copy_entry_tag_v1(GTK_ENTRY(v2_title_entry),   GTK_ENTRY(v1_title_entry), 30);
++    copy_entry_tag_v1(GTK_ENTRY(v2_artist_entry),  GTK_ENTRY(v1_artist_entry), 30);
++    copy_entry_tag_v1(GTK_ENTRY(v2_album_entry),   GTK_ENTRY(v1_album_entry), 30);
++    copy_entry_tag_v1(GTK_ENTRY(v2_year_entry),    GTK_ENTRY(v1_year_entry), 4);
++    copy_entry_tag_v1(GTK_ENTRY(v2_comment_entry), GTK_ENTRY(v1_comment_entry), 30);
++    copy_entry_tag_v1(GTK_ENTRY(v2_tracknum_entry), GTK_ENTRY(v1_tracknum_entry), 3);
++
++    gtk_list_select_item(GTK_LIST(GTK_COMBO(v1_genre_combo)->list), genre_find_index(genre_list, v2_current_genre));
++    return;
++}
++
++void copy_v1_to_v2_cb(GtkButton *button, gpointer user_data)
++{
++    copy_entry_tag_v2(GTK_ENTRY(v1_title_entry),   GTK_ENTRY(v2_title_entry));
++    copy_entry_tag_v2(GTK_ENTRY(v1_artist_entry),  GTK_ENTRY(v2_artist_entry));
++    copy_entry_tag_v2(GTK_ENTRY(v1_album_entry),   GTK_ENTRY(v2_album_entry));
++    copy_entry_tag_v2(GTK_ENTRY(v1_year_entry),    GTK_ENTRY(v2_year_entry));
++    copy_entry_tag_v2(GTK_ENTRY(v1_comment_entry), GTK_ENTRY(v2_comment_entry));
++    copy_entry_tag_v2(GTK_ENTRY(v1_tracknum_entry), GTK_ENTRY(v2_tracknum_entry));
++
++    gtk_list_select_item(GTK_LIST(GTK_COMBO(v2_genre_combo)->list), genre_find_index(genre_list, v1_current_genre));
++    return;
++}
++
++void v1_toggle_cb (GtkWidget *widget, gpointer data)
++{
++    int i = 0;
++    if (GTK_TOGGLE_BUTTON (widget)->active)
++    {
++        // If control reaches here, the toggle button is down
++        // Gray out labels
++        for (i = 0; i < v1_labels_list->len; i++) {
++            gtk_widget_set_sensitive(GTK_WIDGET( g_ptr_array_index(v1_labels_list, i) ), FALSE);
++        }
++        gtk_widget_set_sensitive(v1_title_entry, FALSE);
++        gtk_widget_set_sensitive(v1_artist_entry, FALSE);
++        gtk_widget_set_sensitive(v1_album_entry, FALSE);
++        gtk_widget_set_sensitive(v1_year_entry, FALSE);
++        gtk_widget_set_sensitive(v1_tracknum_entry, FALSE);
++        gtk_widget_set_sensitive(v1_comment_entry, FALSE);
++        gtk_widget_set_sensitive(v1_genre_combo, FALSE);
++    } else {
++
++        // If control reaches here, the toggle button is up
++        // Enable labels
++        for (i = 0; i < v1_labels_list->len; i++) {
++            gtk_widget_set_sensitive(GTK_WIDGET( g_ptr_array_index(v1_labels_list, i) ), TRUE);
++        }
++        gtk_widget_set_sensitive(v1_title_entry, TRUE);
++        gtk_widget_set_sensitive(v1_artist_entry, TRUE);
++        gtk_widget_set_sensitive(v1_album_entry, TRUE);
++        gtk_widget_set_sensitive(v1_year_entry, TRUE);
++        gtk_widget_set_sensitive(v1_tracknum_entry, TRUE);
++        gtk_widget_set_sensitive(v1_comment_entry, TRUE);
++        gtk_widget_set_sensitive(v1_genre_combo, TRUE);
++    }
++}
++
++void v2_toggle_cb (GtkWidget *widget, gpointer data)
++{
++    int i = 0;
++    if (GTK_TOGGLE_BUTTON (widget)->active)
++    {
++        // If control reaches here, the toggle button is down
++        // Gray out labels
++        for (i = 0; i < v2_labels_list->len; i++) {
++            gtk_widget_set_sensitive(GTK_WIDGET( g_ptr_array_index(v2_labels_list, i) ), FALSE);
++        }
++        gtk_widget_set_sensitive(v2_title_entry, FALSE);
++        gtk_widget_set_sensitive(v2_artist_entry, FALSE);
++        gtk_widget_set_sensitive(v2_album_entry, FALSE);
++        gtk_widget_set_sensitive(v2_year_entry, FALSE);
++        gtk_widget_set_sensitive(v2_tracknum_entry, FALSE);
++        gtk_widget_set_sensitive(v2_comment_entry, FALSE);
++        gtk_widget_set_sensitive(v2_composer_entry, FALSE);
++        gtk_widget_set_sensitive(v2_orig_artist_entry, FALSE);
++        gtk_widget_set_sensitive(v2_url_entry, FALSE);
++        gtk_widget_set_sensitive(v2_encoded_by_entry, FALSE);
++        gtk_widget_set_sensitive(v2_genre_combo, FALSE);
++    } else {
++
++        // If control reaches here, the toggle button is up
++        // Enable labels
++        for (i = 0; i < v2_labels_list->len; i++) {
++            gtk_widget_set_sensitive(GTK_WIDGET( g_ptr_array_index(v2_labels_list, i) ), TRUE);
++        }
++        gtk_widget_set_sensitive(v2_title_entry, TRUE);
++        gtk_widget_set_sensitive(v2_artist_entry, TRUE);
++        gtk_widget_set_sensitive(v2_album_entry, TRUE);
++        gtk_widget_set_sensitive(v2_year_entry, TRUE);
++        gtk_widget_set_sensitive(v2_tracknum_entry, TRUE);
++        gtk_widget_set_sensitive(v2_comment_entry, TRUE);
++        gtk_widget_set_sensitive(v2_composer_entry, TRUE);
++        gtk_widget_set_sensitive(v2_orig_artist_entry, TRUE);
++        gtk_widget_set_sensitive(v2_url_entry, TRUE);
++        gtk_widget_set_sensitive(v2_encoded_by_entry, TRUE);
++        gtk_widget_set_sensitive(v2_genre_combo, TRUE);
++    }
++}
++static void v1_genre_selected(GtkList *list, GtkWidget *w, gpointer data)
+ {
+ 	void * p;
+ 	p = gtk_object_get_data(GTK_OBJECT(w), "genre_id");
+ 	if (p != NULL)
+-		current_genre = GPOINTER_TO_INT(p);
++		v1_current_genre = GPOINTER_TO_INT(p);
+ 	else
+-		current_genre = 0;
++		v1_current_genre = 0;
++}
++
++static void v2_genre_selected(GtkList *list, GtkWidget *w, gpointer data)
++{
++	void * p;
++	p = gtk_object_get_data(GTK_OBJECT(w), "genre_id");
++	if (p != NULL)
++		v2_current_genre = GPOINTER_TO_INT(p);
++	else
++		v2_current_genre = 0;
+ }
+ 
+ static void genre_set_popdown(GtkWidget *combo, GList *genres)
+@@ -269,7 +495,7 @@
+ void mpg123_file_info_box(char *filename)
+ {
+ 	int i;
+-	struct id3v1tag_t tag;
++	struct id3v1tag_t id3v1tag;
+ 	FILE *fh;
+ 	char *tmp, *title;
+ 	const char *emphasis[4];
+@@ -284,205 +510,397 @@
+ 
+ 	if (!window)
+ 	{
+-		GtkWidget *vbox, *hbox, *left_vbox, *table;
+-		GtkWidget *mpeg_frame, *mpeg_box;
+-		GtkWidget *label, *filename_hbox;
+-		GtkWidget *bbox, *save, *remove_id3, *cancel;
+-		
++		GtkWidget *window_vbox,
++		          *id3v1_vbox, *id3v2_vbox, *id3v1_frame_vbox, *id3v2_frame_vbox,
++		          *mpeg_lvbox, *mpeg_rvbox, *mpeg_hbox, *mpeg_box, *mpeg_frame,
++		          *bbox, *save, *close, *copy_to, *copy_from,
++		          *table, *label, *filename_hbox;
++
++		v1_labels_list = g_ptr_array_new();
++		v2_labels_list = g_ptr_array_new();
++
+ 		window = gtk_window_new(GTK_WINDOW_DIALOG);
+-		gtk_window_set_policy(GTK_WINDOW(window), FALSE, FALSE, FALSE);
+-		gtk_signal_connect(GTK_OBJECT(window), "destroy",
+-				   gtk_widget_destroyed, &window);
+-		gtk_signal_connect(GTK_OBJECT(window), "key_press_event",
+-				   file_info_box_keypress_cb, NULL);
++		gtk_signal_connect(GTK_OBJECT(window), "destroy", GTK_SIGNAL_FUNC(gtk_widget_destroyed), &window);
++		gtk_signal_connect(GTK_OBJECT(window), "key_press_event", file_info_box_keypress_cb, NULL);
+ 		gtk_container_set_border_width(GTK_CONTAINER(window), 10);
+ 
+-		vbox = gtk_vbox_new(FALSE, 10);
+-		gtk_container_add(GTK_CONTAINER(window), vbox);
+-
++		window_vbox = gtk_vbox_new(FALSE,10);
+ 		filename_hbox = gtk_hbox_new(FALSE, 5);
+-		gtk_box_pack_start(GTK_BOX(vbox), filename_hbox,
+-				   FALSE, TRUE, 0);
++		gtk_box_pack_start(GTK_BOX(window_vbox), filename_hbox, FALSE, TRUE, 0);
+ 
+ 		label = gtk_label_new(_("Filename:"));
+-		gtk_box_pack_start(GTK_BOX(filename_hbox), label,
+-				   FALSE, TRUE, 0);
++		gtk_box_pack_start(GTK_BOX(filename_hbox), label, FALSE, TRUE, 0);
+ 		filename_entry = xmms_entry_new();
+ 		gtk_editable_set_editable(GTK_EDITABLE(filename_entry), FALSE);
+-		gtk_box_pack_start(GTK_BOX(filename_hbox),
+-				   filename_entry, TRUE, TRUE, 0);
+-		
+-		hbox = gtk_hbox_new(FALSE, 10);
+-		gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
+-		
+-		left_vbox = gtk_vbox_new(FALSE, 10);
+-		gtk_box_pack_start(GTK_BOX(hbox), left_vbox, FALSE, FALSE, 0);
++		gtk_box_pack_start(GTK_BOX(filename_hbox), filename_entry, TRUE, TRUE, 0);
+ 
+-		id3_frame = gtk_frame_new(_("ID3 Tag:"));
+-		gtk_box_pack_start(GTK_BOX(left_vbox), id3_frame,
+-				   FALSE, FALSE, 0);
++		/* Set up the genres list */
+ 
+-		table = gtk_table_new(5, 5, FALSE);
++		if (!genre_list)
++		{
++			struct genre_item *item;
++
++			for (i = 0; i < GENRE_MAX; i++)
++			{
++				item = g_malloc(sizeof (*item));
++				item->name = gettext(mpg123_id3_genres[i]);
++				item->id = i;
++				genre_list = g_list_prepend(genre_list, item);
++			}
++			item = g_malloc(sizeof (*item));
++			item->name = "";
++			item->id = 0xff;
++			genre_list = g_list_prepend(genre_list, item);
++			genre_list = g_list_sort(genre_list, genre_comp_func);
++		}
++
++		notebook = gtk_notebook_new ();
++		gtk_notebook_set_tab_pos (GTK_NOTEBOOK (notebook), GTK_POS_TOP);
++
++		/* ID3v2 page */
++
++		id3v2_vbox = gtk_vbox_new(FALSE, 0);
++
++		id3v2_frame = gtk_frame_new("ID3v2 Information");
++		gtk_box_pack_start(GTK_BOX(id3v2_vbox), id3v2_frame, FALSE, FALSE, 0);
++
++		id3v2_frame_vbox = gtk_vbox_new(FALSE, 0);
++		gtk_container_add(GTK_CONTAINER(id3v2_frame), id3v2_frame_vbox);
++
++		table = gtk_table_new(6, 6, FALSE);
+ 		gtk_container_set_border_width(GTK_CONTAINER(table), 5);
+-		gtk_container_add(GTK_CONTAINER(id3_frame), table);
++		gtk_widget_set_usize(GTK_WIDGET(table), 400, -1);
++		gtk_box_pack_start(GTK_BOX(id3v2_frame_vbox), table, FALSE, FALSE, 0);
+ 
+-		label = gtk_label_new(_("Title:"));
++		v2_checkbox = gtk_check_button_new_with_label ("Disable ID3v2 Tag");
++		gtk_signal_connect(GTK_OBJECT(v2_checkbox), "toggled", GTK_SIGNAL_FUNC(v2_toggle_cb), NULL);
++		gtk_table_attach(GTK_TABLE(table), v2_checkbox, 1, 3, 0, 1, GTK_FILL, GTK_FILL, 0, 2);
++
++		label = gtk_label_new("Track number:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+-		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 0, 1,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++		gtk_table_attach(GTK_TABLE(table), label, 3, 4, 0, 1,
++			GTK_FILL, GTK_FILL, 5,5);
+ 
+-		title_entry = gtk_entry_new_with_max_length(30);
+-		gtk_table_attach(GTK_TABLE(table), title_entry, 1, 4, 0, 1,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_tracknum_entry = gtk_entry_new_with_max_length(3);
++		gtk_widget_set_usize(v2_tracknum_entry, 20, -1);
++		gtk_table_attach(GTK_TABLE(table), v2_tracknum_entry, 4, 5, 0, 1,
++			GTK_FILL, GTK_FILL, 0, 2);
+ 
+-		label = gtk_label_new(_("Artist:"));
++		label = gtk_label_new("Title:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+-		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 1, 2,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 1, 2, GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		artist_entry = gtk_entry_new_with_max_length(30);
+-		gtk_table_attach(GTK_TABLE(table), artist_entry, 1, 4, 1, 2,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_title_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_title_entry, 1, 5, 1, 2,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
+ 
+-		label = gtk_label_new(_("Album:"));
++		label = gtk_label_new("Artist:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+ 		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 2, 3,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++			GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		album_entry = gtk_entry_new_with_max_length(30);
+-		gtk_table_attach(GTK_TABLE(table), album_entry, 1, 4, 2, 3,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_artist_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_artist_entry, 1, 5, 2, 3,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
+ 
+-		label = gtk_label_new(_("Comment:"));
++		label = gtk_label_new("Album:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+ 		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 3, 4,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++			GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		comment_entry = gtk_entry_new_with_max_length(30);
+-		gtk_table_attach(GTK_TABLE(table), comment_entry, 1, 4, 3, 4,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_album_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_album_entry, 1, 5, 3, 4,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
+ 
+-		label = gtk_label_new(_("Year:"));
++		label = gtk_label_new("Comment:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+ 		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 4, 5,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++			GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		year_entry = gtk_entry_new_with_max_length(4);
+-		gtk_widget_set_usize(year_entry, 40, -1);
+-		gtk_table_attach(GTK_TABLE(table), year_entry, 1, 2, 4, 5,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_comment_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_comment_entry, 1, 5, 4, 5,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
+ 
+-		label = gtk_label_new(_("Track number:"));
++		label = gtk_label_new("Year:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+-		gtk_table_attach(GTK_TABLE(table), label, 2, 3, 4, 5,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 5, 6,
++			GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		tracknum_entry = gtk_entry_new_with_max_length(3);
+-		gtk_widget_set_usize(tracknum_entry, 40, -1);
+-		gtk_table_attach(GTK_TABLE(table), tracknum_entry, 3, 4, 4, 5,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v2_year_entry = gtk_entry_new_with_max_length(4);
++		gtk_widget_set_usize(v2_year_entry, 45, -1);
++		gtk_table_attach(GTK_TABLE(table), v2_year_entry, 1, 2, 5, 6,
++			GTK_FILL, GTK_FILL, 0, 2);
+ 
+-		label = gtk_label_new(_("Genre:"));
++		label = gtk_label_new("Genre:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 2, 3, 5, 6,
++			GTK_FILL, GTK_FILL, 5, 5);
++
++		v2_genre_combo = gtk_combo_new();
++		gtk_combo_set_value_in_list(GTK_COMBO(v2_genre_combo), FALSE, TRUE);
++
++		genre_set_popdown(v2_genre_combo, genre_list);
++		gtk_signal_connect(GTK_OBJECT(GTK_COMBO(v2_genre_combo)->list),
++				   "select-child", v2_genre_selected, NULL);
++
++		gtk_table_attach(GTK_TABLE(table), v2_genre_combo, 3, 5, 5, 6,
++			GTK_FILL | GTK_SHRINK, GTK_FILL |
++			GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Composer:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 6, 7,
++			GTK_FILL, GTK_FILL, 5, 5);
++
++		v2_composer_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_composer_entry, 1, 5, 6, 7,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Orig. Artist:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 7, 8,
++			GTK_FILL, GTK_FILL, 5, 5);
++
++		v2_orig_artist_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_orig_artist_entry, 1, 5, 7, 8,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("URL:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 8, 9,
++			GTK_FILL, GTK_FILL, 5, 5);
++
++		v2_url_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_url_entry, 1, 5, 8, 9,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++		label = gtk_label_new("Encoded By:");
++		g_ptr_array_add(v2_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 9, 10,
++			GTK_FILL, GTK_FILL, 5, 5);
++
++		v2_encoded_by_entry = gtk_entry_new_with_max_length(MAX_ENTRY_LEN2);
++		gtk_table_attach(GTK_TABLE(table), v2_encoded_by_entry, 1, 5, 9, 10,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++			GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		bbox = gtk_hbutton_box_new();
++		gtk_button_box_set_layout (GTK_BUTTON_BOX (bbox), GTK_BUTTONBOX_START);
++		gtk_button_box_set_spacing (GTK_BUTTON_BOX (bbox), 0);
++		gtk_container_set_border_width(GTK_CONTAINER(bbox), 5);
++		gtk_box_pack_start(GTK_BOX(id3v2_frame_vbox), bbox, FALSE, FALSE, 0);
++
++		copy_to = gtk_button_new_with_label("ID3v2 to ID3v1");
++		gtk_signal_connect(GTK_OBJECT(copy_to), "clicked", GTK_SIGNAL_FUNC(copy_v2_to_v1_cb), NULL);
++		/* remove the next line to thicken the button width */
++		GTK_WIDGET_SET_FLAGS(copy_to, GTK_CAN_DEFAULT);
++		gtk_box_pack_start(GTK_BOX(bbox), copy_to, FALSE, TRUE, 0);
++
++		label = gtk_label_new ("ID3v2");
++		gtk_notebook_append_page (GTK_NOTEBOOK (notebook), id3v2_vbox, label);
++
++		/* ID3v1 page */
++
++		id3v1_vbox = gtk_vbox_new(FALSE, 10);
++		id3v1_frame = gtk_frame_new("ID3v1 Information");
++		gtk_box_pack_start(GTK_BOX(id3v1_vbox), id3v1_frame, TRUE, TRUE, 0);
++
++		id3v1_frame_vbox = gtk_vbox_new(FALSE,10);
++		gtk_container_add(GTK_CONTAINER(id3v1_frame), id3v1_frame_vbox);
++
++		table = gtk_table_new(6, 6, FALSE);
++		gtk_container_set_border_width(GTK_CONTAINER(table), 5);
++		//gtk_widget_set_usize(GTK_WIDGET(table), 325, -1);
++		//gtk_container_add(GTK_CONTAINER(id3v1_frame), table);
++		gtk_box_pack_start(GTK_BOX(id3v1_frame_vbox), table, FALSE, FALSE, 0);
++
++		v1_checkbox = gtk_check_button_new_with_label ("Disable ID3v1 Tag");
++		gtk_signal_connect(GTK_OBJECT(v1_checkbox), "toggled", GTK_SIGNAL_FUNC(v1_toggle_cb), NULL);
++		gtk_table_attach(GTK_TABLE(table), v1_checkbox, 1, 3, 0, 1,
++		GTK_FILL, GTK_FILL, 0, 2);
++
++		label = gtk_label_new("Track number:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 3, 4, 0, 1,
++		GTK_FILL, GTK_FILL, 5,5);
++
++		v1_tracknum_entry = gtk_entry_new_with_max_length(3);
++		gtk_widget_set_usize(v1_tracknum_entry, 20, -1);
++		gtk_table_attach(GTK_TABLE(table), v1_tracknum_entry, 4, 5, 0, 1,
++		GTK_FILL, GTK_FILL, 0, 2);
++
++		label = gtk_label_new("Title:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 1, 2,
++		GTK_FILL, GTK_FILL, 5, 5);
++
++		v1_title_entry = gtk_entry_new_with_max_length(30);
++		gtk_table_attach(GTK_TABLE(table), v1_title_entry, 1, 5, 1, 2,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Artist:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 2, 3,
++		GTK_FILL, GTK_FILL, 5, 5);
++
++		v1_artist_entry = gtk_entry_new_with_max_length(30);
++		gtk_table_attach(GTK_TABLE(table), v1_artist_entry, 1, 5, 2, 3,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Album:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 3, 4,
++		GTK_FILL, GTK_FILL, 5, 5);
++
++		v1_album_entry = gtk_entry_new_with_max_length(30);
++		gtk_table_attach(GTK_TABLE(table), v1_album_entry, 1, 5, 3, 4,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Comment:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 4, 5,
++		GTK_FILL, GTK_FILL, 5, 5);
++
++		v1_comment_entry = gtk_entry_new_with_max_length(30);
++		gtk_table_attach(GTK_TABLE(table), v1_comment_entry, 1, 5, 4, 5,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK,
++		GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 2);
++
++		label = gtk_label_new("Year:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
+ 		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
+ 		gtk_table_attach(GTK_TABLE(table), label, 0, 1, 5, 6,
+-				 GTK_FILL, GTK_FILL, 5, 5);
++		GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		genre_combo = gtk_combo_new();
+-		gtk_entry_set_editable(GTK_ENTRY(GTK_COMBO(genre_combo)->entry),
+-				       FALSE);
+-		if (!genre_list)
+-		{
+-			struct genre_item *item;
++		v1_year_entry = gtk_entry_new_with_max_length(4);
++		gtk_widget_set_usize(v1_year_entry, 45, -1);
++		gtk_table_attach(GTK_TABLE(table), v1_year_entry, 1, 2, 5, 6,
++		GTK_FILL, GTK_FILL, 0, 2);
+ 
+-			for (i = 0; i < GENRE_MAX; i++)
+-			{
+-				item = g_malloc(sizeof (*item));
+-				item->name = gettext(mpg123_id3_genres[i]);
+-				item->id = i;
+-				genre_list = g_list_prepend(genre_list, item);
+-			}
+-			item = g_malloc(sizeof (*item));
+-			item->name = "";
+-			item->id = 0xff;
+-			genre_list = g_list_prepend(genre_list, item);
+-			genre_list = g_list_sort(genre_list, genre_comp_func);
+-		}
+-		genre_set_popdown(genre_combo, genre_list);
+-		gtk_signal_connect(GTK_OBJECT(GTK_COMBO(genre_combo)->list),
+-				   "select-child", genre_selected, NULL);
++		label = gtk_label_new("Genre:");
++		g_ptr_array_add(v1_labels_list, (gpointer)label);
++		gtk_misc_set_alignment(GTK_MISC(label), 1, 0.5);
++		gtk_table_attach(GTK_TABLE(table), label, 2, 3, 5, 6,
++		GTK_FILL, GTK_FILL, 5, 5);
+ 
+-		gtk_table_attach(GTK_TABLE(table), genre_combo, 1, 4, 5, 6,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK,
+-				 GTK_FILL | GTK_EXPAND | GTK_SHRINK, 0, 5);
++		v1_genre_combo = gtk_combo_new();
++		gtk_entry_set_editable(GTK_ENTRY(GTK_COMBO(v1_genre_combo)->entry), FALSE);
++		genre_set_popdown(v1_genre_combo, genre_list);
++		gtk_signal_connect(GTK_OBJECT(GTK_COMBO(v1_genre_combo)->list),
++			   "select-child", v1_genre_selected, NULL);
++
++		gtk_table_attach(GTK_TABLE(table), v1_genre_combo, 3, 5, 5, 6,
++			GTK_FILL | GTK_SHRINK, GTK_FILL |
++			GTK_SHRINK, 0, 2);
+ 
+ 		bbox = gtk_hbutton_box_new();
+-		gtk_button_box_set_layout(GTK_BUTTON_BOX(bbox),
+-					  GTK_BUTTONBOX_END);
+-		gtk_button_box_set_spacing(GTK_BUTTON_BOX(bbox), 5);
+-		gtk_box_pack_start(GTK_BOX(left_vbox), bbox, FALSE, FALSE, 0);
++		gtk_button_box_set_layout (GTK_BUTTON_BOX (bbox), GTK_BUTTONBOX_START);
++		gtk_button_box_set_spacing (GTK_BUTTON_BOX (bbox), 0);
++		gtk_container_set_border_width(GTK_CONTAINER(bbox), 5);
++		gtk_box_pack_start(GTK_BOX(id3v1_frame_vbox), bbox, FALSE, FALSE, 0);
+ 
+-		save = gtk_button_new_with_label(_("Save"));
+-		gtk_signal_connect(GTK_OBJECT(save), "clicked", save_cb, NULL);
+-		GTK_WIDGET_SET_FLAGS(save, GTK_CAN_DEFAULT);
+-		gtk_box_pack_start(GTK_BOX(bbox), save, TRUE, TRUE, 0);
+-		gtk_widget_grab_default(save);
++		copy_from = gtk_button_new_with_label("ID3v1 to ID3v2");
++		gtk_signal_connect(GTK_OBJECT(copy_from), "clicked", GTK_SIGNAL_FUNC(copy_v1_to_v2_cb), NULL);
++		// remove the next line to thicken the button width
++		GTK_WIDGET_SET_FLAGS(copy_from, GTK_CAN_DEFAULT);
++		gtk_box_pack_start(GTK_BOX(bbox), copy_from, FALSE, TRUE, 0);
+ 
+-		remove_id3 = gtk_button_new_with_label(_("Remove ID3"));
+-		gtk_signal_connect(GTK_OBJECT(remove_id3), "clicked",
+-				   remove_id3_cb, NULL);
+-		GTK_WIDGET_SET_FLAGS(remove_id3, GTK_CAN_DEFAULT);
+-		gtk_box_pack_start(GTK_BOX(bbox), remove_id3, TRUE, TRUE, 0);
++		label = gtk_label_new ("ID3v1");
++		gtk_notebook_append_page (GTK_NOTEBOOK (notebook), id3v1_vbox, label);
+ 
+-		cancel = gtk_button_new_with_label(_("Cancel"));
+-		gtk_signal_connect_object(GTK_OBJECT(cancel), "clicked",
+-					  gtk_widget_destroy, GTK_OBJECT(window));
+-		GTK_WIDGET_SET_FLAGS(cancel, GTK_CAN_DEFAULT);
+-		gtk_box_pack_start(GTK_BOX(bbox), cancel, TRUE, TRUE, 0);
++		/* MPEG info page */
+ 
+-		mpeg_frame = gtk_frame_new(_("MPEG Info:"));
+-		gtk_box_pack_start(GTK_BOX(hbox), mpeg_frame, FALSE, FALSE, 0);
++		mpeg_frame = gtk_frame_new("MPEG Information");
++		mpeg_hbox = gtk_hbox_new(FALSE,50);
++		gtk_container_add(GTK_CONTAINER(mpeg_frame), mpeg_hbox);
++
++		mpeg_lvbox = gtk_vbox_new(FALSE, 5);
++		gtk_container_set_border_width(GTK_CONTAINER(mpeg_lvbox), 10);
++		gtk_box_pack_start(GTK_BOX(mpeg_hbox), mpeg_lvbox, FALSE, FALSE, 0);
+ 
+ 		mpeg_box = gtk_vbox_new(FALSE, 5);
+-		gtk_container_add(GTK_CONTAINER(mpeg_frame), mpeg_box);
++		gtk_box_pack_start(GTK_BOX(mpeg_hbox), mpeg_box, FALSE, FALSE, 0);
+ 		gtk_container_set_border_width(GTK_CONTAINER(mpeg_box), 10);
+ 		gtk_box_set_spacing(GTK_BOX(mpeg_box), 0);
+ 
+ 		mpeg_level = gtk_label_new("");
+-		gtk_widget_set_usize(mpeg_level, 120, -2);
+-		gtk_misc_set_alignment(GTK_MISC(mpeg_level), 0, 0);
+-		gtk_box_pack_start(GTK_BOX(mpeg_box), mpeg_level, FALSE, FALSE, 0);
+-
+-		mpeg_bitrate = gtk_label_new("");
+-		gtk_misc_set_alignment(GTK_MISC(mpeg_bitrate), 0, 0);
+-		gtk_label_set_justify(GTK_LABEL(mpeg_bitrate),
+-				      GTK_JUSTIFY_LEFT);
+-		gtk_box_pack_start(GTK_BOX(mpeg_box),
+-				   mpeg_bitrate, FALSE, FALSE, 0);
++		//gtk_widget_set_usize(mpeg_level, 120, -2);
++		gtk_label_set_justify (GTK_LABEL(mpeg_level), GTK_JUSTIFY_LEFT);
++		gtk_misc_set_alignment(GTK_MISC(mpeg_level), 0, 0.5);
++		gtk_box_pack_start(GTK_BOX(mpeg_lvbox), mpeg_level, FALSE, FALSE, 0);
+ 
+ 		mpeg_samplerate = gtk_label_new("");
+-		gtk_misc_set_alignment(GTK_MISC(mpeg_samplerate), 0, 0);
+-		gtk_box_pack_start(GTK_BOX(mpeg_box), mpeg_samplerate,
+-				   FALSE, FALSE, 0);
++		gtk_label_set_justify (GTK_LABEL(mpeg_samplerate), GTK_JUSTIFY_LEFT);
++		gtk_misc_set_alignment(GTK_MISC(mpeg_samplerate), 0, 0.5);
++		gtk_box_pack_start(GTK_BOX(mpeg_lvbox), mpeg_samplerate, FALSE, FALSE, 0);
++
++		mpeg_fileinfo = gtk_label_new("");
++		gtk_label_set_justify (GTK_LABEL(mpeg_fileinfo), GTK_JUSTIFY_LEFT);
++		gtk_misc_set_alignment(GTK_MISC(mpeg_fileinfo), 0, 0.5);
++		gtk_box_pack_start(GTK_BOX(mpeg_lvbox), mpeg_fileinfo, FALSE, FALSE, 0);
++
++		mpeg_rvbox = gtk_vbox_new(FALSE, 5);
++		gtk_box_pack_start(GTK_BOX(mpeg_hbox), mpeg_rvbox, FALSE, FALSE, 0);
++		gtk_container_set_border_width(GTK_CONTAINER(mpeg_rvbox), 10);
++
++		mpeg_bitrate = gtk_label_new("");
++		gtk_label_set_justify (GTK_LABEL(mpeg_bitrate), GTK_JUSTIFY_LEFT);
++		gtk_misc_set_alignment(GTK_MISC(mpeg_bitrate), 0, 0.5);
++		gtk_box_pack_start(GTK_BOX(mpeg_rvbox), mpeg_bitrate, FALSE, FALSE, 0);
+ 
+ 		mpeg_flags = gtk_label_new("");
+-		gtk_misc_set_alignment(GTK_MISC(mpeg_flags), 0, 0);
+-		gtk_label_set_justify(GTK_LABEL(mpeg_flags), GTK_JUSTIFY_LEFT);
+-		gtk_box_pack_start(GTK_BOX(mpeg_box), mpeg_flags,
+-				   FALSE, FALSE, 0);
++		gtk_label_set_justify (GTK_LABEL(mpeg_flags), GTK_JUSTIFY_LEFT);
++		gtk_misc_set_alignment(GTK_MISC(mpeg_flags), 0, 0.5);
++		gtk_box_pack_start(GTK_BOX(mpeg_rvbox), mpeg_flags, FALSE, FALSE, 0);
+ 
+-		mpeg_fileinfo = gtk_label_new("");
+-		gtk_misc_set_alignment(GTK_MISC(mpeg_fileinfo), 0, 0);
+-		gtk_label_set_justify(GTK_LABEL(mpeg_fileinfo),
+-				      GTK_JUSTIFY_LEFT);
+-		gtk_box_pack_start(GTK_BOX(mpeg_box), mpeg_fileinfo,
+-				   FALSE, FALSE, 0);
++		label = gtk_label_new ("MPEG");
++		gtk_notebook_append_page (GTK_NOTEBOOK (notebook), mpeg_frame, label);
++
++		/* add notebook to window vbox */
++		gtk_box_pack_start(GTK_BOX(window_vbox), notebook, FALSE, FALSE, 0);
++
++		/* add button box to window vbox */
++		bbox = gtk_hbutton_box_new();
++		gtk_box_pack_start(GTK_BOX(window_vbox), bbox, FALSE, FALSE, 0);
+ 
++		gtk_button_box_set_layout (GTK_BUTTON_BOX (bbox), GTK_BUTTONBOX_END);
++		gtk_button_box_set_spacing (GTK_BUTTON_BOX (bbox), 5);
++
++		save = gtk_button_new_with_label("Save");
++		gtk_signal_connect(GTK_OBJECT(save), "clicked", GTK_SIGNAL_FUNC(save_cb), NULL);
++		gtk_box_pack_start(GTK_BOX(bbox), save, TRUE, TRUE, 5);
++
++		close = gtk_button_new_with_label("Close");
++		gtk_signal_connect_object(GTK_OBJECT(close), "clicked",
++		GTK_SIGNAL_FUNC(gtk_widget_destroy), GTK_OBJECT(window));
++		gtk_box_pack_start(GTK_BOX(bbox), close, TRUE, TRUE, 5);
++
++		gtk_container_add(GTK_CONTAINER(window), window_vbox);
+ 		gtk_widget_show_all(window);
+ 	}
+ 
+@@ -500,73 +918,128 @@
+ 	title = g_strdup(g_basename(filename));
+ 	if ((tmp = strrchr(title, '.')) != NULL)
+ 		*tmp = '\0';
+-	gtk_entry_set_text(GTK_ENTRY(title_entry), title);
++	gtk_entry_set_text(GTK_ENTRY(v1_title_entry), title);
++	gtk_entry_set_text(GTK_ENTRY(v2_title_entry), title);
+ 	g_free(title);
+ 
+-	gtk_entry_set_text(GTK_ENTRY(artist_entry), "");
+-	gtk_entry_set_text(GTK_ENTRY(album_entry), "");
+-	gtk_entry_set_text(GTK_ENTRY(year_entry), "");
+-	gtk_entry_set_text(GTK_ENTRY(tracknum_entry), "");
+-	gtk_entry_set_text(GTK_ENTRY(comment_entry), "");
+-	gtk_list_select_item(GTK_LIST(GTK_COMBO(genre_combo)->list),
++	gtk_entry_set_text(GTK_ENTRY(v1_artist_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v1_album_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v1_year_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v1_tracknum_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v1_comment_entry), "");
++
++	gtk_list_select_item(GTK_LIST(GTK_COMBO(v1_genre_combo)->list),
+ 			     genre_find_index(genre_list, 0xff));
++
++	gtk_entry_set_text(GTK_ENTRY(v2_artist_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_album_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_year_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_tracknum_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_comment_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_composer_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_orig_artist_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_url_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(v2_encoded_by_entry), "");
++	gtk_entry_set_text(GTK_ENTRY(GTK_COMBO(v2_genre_combo)->entry), "");
++
+ 	gtk_label_set_text(GTK_LABEL(mpeg_level), "MPEG ?, layer ?");
+ 	gtk_label_set_text(GTK_LABEL(mpeg_bitrate), "");
+ 	gtk_label_set_text(GTK_LABEL(mpeg_samplerate), "");
+ 	gtk_label_set_text(GTK_LABEL(mpeg_flags), "");
+ 	gtk_label_set_text(GTK_LABEL(mpeg_fileinfo), "");
+-
+ 	if (!strncasecmp(filename, "http://", 7))
+ 	{
+ 		file_info_http(filename);
+ 		return;
+ 	}
+ 
+-	gtk_widget_set_sensitive(id3_frame, TRUE);
++	gtk_widget_set_sensitive(id3v1_frame, TRUE);
++	gtk_widget_set_sensitive(id3v2_frame, TRUE);
+ 
+ 	if ((fh = fopen(current_filename, "rb")) != NULL)
+ 	{
+ 		struct frame frm;
+ 		gboolean id3_found = FALSE;
++		struct id3_tag *id3 = NULL;
+ 		guint8 *buf;
+ 		double tpf;
+ 		int pos;
+ 		xing_header_t xing_header;
+ 		guint32 num_frames;
+-
+-		fseek(fh, -sizeof (tag), SEEK_END);
+-		if (fread(&tag, 1, sizeof (tag), fh) == sizeof (tag))
++		/*
++		 * Try reading ID3v2 tag.
++		 */
++		fseek(fh, 0, SEEK_SET);
++		id3 = id3_open_fp(fh, 0);
++		if (id3 != NULL)
+ 		{
+-			if (!strncmp(tag.tag, "TAG", 3))
++			struct id3_frame* frame;
++
++			set_entry_tag_v2(GTK_ENTRY(v2_title_entry), id3, ID3_TIT2);
++			set_entry_tag_v2(GTK_ENTRY(v2_artist_entry), id3, ID3_TPE1);
++			set_entry_tag_v2(GTK_ENTRY(v2_album_entry), id3, ID3_TALB);
++			set_entry_tag_v2(GTK_ENTRY(v2_comment_entry), id3, ID3_COMM);
++			set_entry_tag_v2(GTK_ENTRY(v2_composer_entry), id3, ID3_TCOM);
++			set_entry_tag_v2(GTK_ENTRY(v2_orig_artist_entry), id3, ID3_TOPE);
++			set_entry_tag_v2(GTK_ENTRY(v2_url_entry), id3, ID3_WCOM);
++			set_entry_tag_v2(GTK_ENTRY(v2_encoded_by_entry), id3, ID3_TENC);
++			set_entry_tag_v2(GTK_ENTRY(v2_tracknum_entry), id3, ID3_TRCK);
++			set_entry_tag_v2(GTK_ENTRY(v2_year_entry), id3, ID3_TYER);
++
++			frame = id3_get_frame(id3, ID3_TCON, 1);
++			if (frame != NULL)
+ 			{
+-				id3_found = TRUE;
+-				set_entry_tag(GTK_ENTRY(title_entry),
+-					      tag.title, 30);
+-				set_entry_tag(GTK_ENTRY(artist_entry),
+-					      tag.artist, 30);
+-				set_entry_tag(GTK_ENTRY(album_entry),
+-					      tag.album, 30);
+-				set_entry_tag(GTK_ENTRY(year_entry),
+-					      tag.year, 4);
+-				/* Check for v1.1 tags */
+-				if (tag.u.v1_1.__zero == 0 && tag.u.v1_1.track_number > 0)
+-				{
+-					char *temp = g_strdup_printf("%d", tag.u.v1_1.track_number);
+-					set_entry_tag(GTK_ENTRY(comment_entry),
+-						      tag.u.v1_1.comment, 28);
+-					gtk_entry_set_text(GTK_ENTRY(tracknum_entry), temp);
+-					g_free(temp);
+-				}
+-				else
++				char* genre = id3_get_content(frame);
++				if (genre != NULL)
+ 				{
+-					set_entry_tag(GTK_ENTRY(comment_entry),
+-						      tag.u.v1_0.comment, 30);
+-					gtk_entry_set_text(GTK_ENTRY(tracknum_entry), "");
++					int genre_idx = genre_find_index_str(genre_list, genre);
++					if (genre_idx > 0)
++						gtk_list_select_item(GTK_LIST(GTK_COMBO(v2_genre_combo)->list), genre_idx);
++					else
++						gtk_entry_set_text(GTK_ENTRY(GTK_COMBO(v2_genre_combo)->entry), genre);
+ 				}
+-				
+-				gtk_list_select_item(GTK_LIST(GTK_COMBO(genre_combo)->list), genre_find_index(genre_list, tag.genre));
+ 			}
++
++			id3_close(id3);
++		}
++		else
++		{
++			/* Grey out the id3v2 tab */
++			gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v2_checkbox), TRUE);
++		}
++
++		/*
++		* Try reading ID3v1 tag.
++		*/
++		fseek(fh, -sizeof (id3v1tag), SEEK_END);
++		if ( (fread(&id3v1tag, 1, sizeof (id3v1tag), fh) == sizeof (id3v1tag)) && !strncmp(id3v1tag.tag, "TAG", 3))
++		{
++		id3_found = TRUE;
++		set_entry_tag_v1(GTK_ENTRY(v1_title_entry), id3v1tag.title, 30);
++		set_entry_tag_v1(GTK_ENTRY(v1_artist_entry), id3v1tag.artist, 30);
++		set_entry_tag_v1(GTK_ENTRY(v1_album_entry), id3v1tag.album, 30);
++		set_entry_tag_v1(GTK_ENTRY(v1_year_entry), id3v1tag.year, 4);
++		/* Check for v1.1 tags */
++		if (id3v1tag.u.v1_1.__zero == 0 && id3v1tag.u.v1_1.track_number > 0)
++		{
++			char *temp = g_strdup_printf("%d", id3v1tag.u.v1_1.track_number);
++			set_entry_tag_v1(GTK_ENTRY(v1_comment_entry), id3v1tag.u.v1_1.comment, 28);
++			gtk_entry_set_text(GTK_ENTRY(v1_tracknum_entry), temp);
++			g_free(temp);
++		}
++		else
++		{
++			set_entry_tag_v1(GTK_ENTRY(v1_comment_entry), id3v1tag.u.v1_0.comment, 30);
++			gtk_entry_set_text(GTK_ENTRY(v1_tracknum_entry), "");
+ 		}
++		gtk_list_select_item(GTK_LIST(GTK_COMBO(v1_genre_combo)->list), genre_find_index(genre_list, id3v1tag.genre));
++		}
++		else
++		{
++		// Grey out id3v1 tab
++		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(v1_checkbox), TRUE);
++		}
++
+ 		rewind(fh);
+ 		
+ 		if (!mpg123_get_first_frame(fh, &frm, &buf))
+diff -dPNur xmms-1.2.11/Input/mpg123/id3.c xmms-1.2.11-new/Input/mpg123/id3.c
+--- xmms-1.2.11/Input/mpg123/id3.c	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3.c	2007-11-24 23:58:41.000000000 +0100
+@@ -22,6 +22,7 @@
+ 
+ #include <sys/types.h>
+ #include <sys/uio.h>
++#include <sys/stat.h>
+ #include <glib.h>
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -49,7 +50,7 @@
+  */
+ static int id3_seek_mem(struct id3_tag *id3, int offset)
+ {
+-	if (id3->id3_pos + offset > id3->id3_tagsize ||
++	if (id3->id3_pos + offset > id3->id3_totalsize ||
+ 	    id3->id3_pos + offset < 0)
+ 	{
+ 		id3_error(id3, "seeking beyond tag boundary");
+@@ -77,7 +78,7 @@
+ 	/*
+ 	 * Check boundary.
+ 	 */
+-	if (id3->id3_pos + size > id3->id3_tagsize)
++	if (id3->id3_pos + size > id3->id3_totalsize)
+ 		return NULL;
+ 
+ 	/*
+@@ -118,7 +119,7 @@
+ 	/*
+ 	 * Check boundary.
+ 	 */
+-	if (id3->id3_pos + offset > id3->id3_tagsize ||
++	if (id3->id3_pos + offset > id3->id3_totalsize ||
+ 	    id3->id3_pos + offset < 0)
+ 		return -1;
+ 
+@@ -148,8 +149,8 @@
+ 	/*
+ 	 * Check boundary.
+ 	 */
+-	if (id3->id3_pos + size > id3->id3_tagsize)
+-		return NULL;
++	if (id3->id3_pos + size > id3->id3_totalsize)
++		size = id3->id3_totalsize - id3->id3_pos;
+ 
+ 	/*
+ 	 * If buffer is NULL, we use the default buffer.
+@@ -205,7 +206,7 @@
+ 	/*
+ 	 * Check boundary.
+ 	 */
+-	if (id3->id3_pos + offset > id3->id3_tagsize ||
++	if (id3->id3_pos + offset > id3->id3_totalsize ||
+ 	    id3->id3_pos + offset < 0)
+ 		return -1;
+ 
+@@ -263,8 +264,8 @@
+ 	/*
+ 	 * Check boundary.
+ 	 */
+-	if (id3->id3_pos + size > id3->id3_tagsize)
+-		size = id3->id3_tagsize - id3->id3_pos;
++	if (id3->id3_pos + size > id3->id3_totalsize)
++		size = id3->id3_totalsize - id3->id3_pos;
+ 
+ 	/*
+ 	 * If buffer is NULL, we use the default buffer.
+@@ -338,6 +339,32 @@
+ 	return NULL;
+ }
+ 
++/*
++ * Function id3_new()
++ *
++ *    Creates a new ID3 tag structure. Useful for creating
++ *    a new tag.
++ *
++ */
++struct id3_tag *id3_new()
++{
++    struct id3_tag *id3;
++
++    /*
++     * Allocate ID3 structure.
++     */
++    id3 = g_malloc0( sizeof(struct id3_tag) );
++    
++    if (id3 != NULL)
++    {
++       id3_init_tag ( id3 );
++       id3->id3_type = ID3_TYPE_NONE;
++       id3->id3_seek = NULL;
++       id3->id3_read = NULL;
++    }
++
++    return id3;
++}
+ 
+ /*
+  * Function id3_open_fd (fd, flags)
+@@ -493,7 +520,7 @@
+ 	if (id3->id3_newtag)
+ 		return 0;
+ 	else
+-		return id3->id3_tagsize + 3 + sizeof(id3_taghdr_t);
++		return id3->id3_totalsize + 3 + sizeof(id3_taghdr_t);
+ }
+ #endif
+ 
+@@ -560,6 +587,81 @@
+ 	return 0;
+ }
+ 
++/*
++ * Function id3_remove_tag_filename(filename)
++ *
++ *   Remove the ID3v2 tag from the file indicated by filename. Takes care of resizing
++ *   the file, if needed. Returns 0 upon success, or -1 if an error occured.
++ *
++ */
++int id3_remove_tag_filename(const char* filename)
++{
++    struct id3_tag *current_id3; 
++    int fd;
++    int current_totalsize;
++    struct stat stat_buf;
++    
++    fd = open(filename, O_RDWR);
++    if (fd == -1)
++       return -1;
++      
++    /*
++     * Figure out how large the current tag is.
++     */
++    current_id3 = id3_open_fd(fd, 0);
++    if (current_id3 != NULL)
++    {
++       /* We use MAX to make sure an erroneous tag doesn't confuse us */
++       current_totalsize = MAX(current_id3->id3_totalsize, 0);
++       id3_close(current_id3);
++    }
++    else
++    {
++       current_totalsize = 0;
++    }
++    
++    if (current_totalsize <= 0)
++       return 0;
++    
++    /*
++     * Rewrite the file.
++     */
++
++    stat(filename, &stat_buf); 
++
++    /* Re-position all the data current_totalsize bytes backwards */
++    {
++          int read_pos, write_pos;
++          size_t read_size;
++          char buf[4096];
++
++          /* TODO: Add error handling to IO operations */
++          
++          /* We reposition the data by going forwards, each time reading
++             a block and copying it backward. That way, we never write
++             over a block which we intend to read later. */
++          write_pos = 0;
++          read_pos = write_pos + current_totalsize;
++
++          do
++          {
++             lseek(fd, read_pos, SEEK_SET);
++             read_size = read(fd, buf, sizeof(buf));
++             read_pos += read_size;
++             
++             /* Write whatever block we've got */
++             lseek(fd, write_pos, SEEK_SET);
++             write(fd, buf, read_size);
++             write_pos += read_size;
++          }
++          while (read_size > 0);
++       
++          ftruncate(fd, stat_buf.st_size - current_totalsize);
++    }
++    
++    close(fd);
++    return 0;
++}
+ 
+ /*
+  * Function id3_write_tag (id3, fd)
+@@ -567,30 +669,25 @@
+  *    Wrtite the ID3 tag to the indicated file descriptor.  Return 0
+  *    upon success, or -1 if an error occured.
+  *
++ *    Warning: This function is called by id3_write_tag_filename and should
++ *             not be called standalone, as it doesn't perform seeking
++ *             and doesn't enlarge the file as necessary, and thus might
++ *             OVERWRITE THE AUDIO DATA.
++ *
+  */
+ int id3_write_tag(struct id3_tag *id3, int fd)
+ {
+ 	struct id3_frame *fr;
+ 	GList *node;
+-	int size = 0;
+ 	char buf[ID3_TAGHDR_SIZE];
+ 
+ 	/*
+-	 * Calculate size of ID3 tag.
+-	 */
+-	for (node = id3->id3_frame; node != NULL; node = node->next)
+-	{
+-		fr = node->data;
+-		size += fr->fr_size + ID3_FRAMEHDR_SIZE;
+-	}
+-
+-	/*
+ 	 * Write tag header.
+ 	 */
+ 	buf[0] = id3->id3_version;
+ 	buf[1] = id3->id3_revision;
+ 	buf[2] = id3->id3_flags;
+-	ID3_SET_SIZE28(size, buf[3], buf[4], buf[5], buf[6]);
++	ID3_SET_SIZE28(id3->id3_size, buf[3], buf[4], buf[5], buf[6]);
+ 
+ 	if (safe_write(fd, "ID3", 3) == -1)
+ 		return -1;
+@@ -617,19 +714,203 @@
+ 		 * TODO: Support compressed headers, encoded
+ 		 * headers, and grouping info.
+ 		 */
+-		/*  fhdr.fh_id = fr->fr_desc ? g_htonl(fr->fr_desc->fd_id) : 0; */
+-		fhdr[3] = (fr->fr_size >> 24) & 0xff;
+-		fhdr[4] = (fr->fr_size >> 16) & 0xff;
+-		fhdr[5] = (fr->fr_size >> 8) & 0xff;
+-		fhdr[6] = fr->fr_size & 0xff;
+-		fhdr[7] = (fr->fr_flags >> 8) & 0xff;
+-		fhdr[8] = fr->fr_flags & 0xff;
++		fhdr[0] = fr->fr_desc->fd_idstr[0];
++		fhdr[1] = fr->fr_desc->fd_idstr[1];
++		fhdr[2] = fr->fr_desc->fd_idstr[2];
++		fhdr[3] = fr->fr_desc->fd_idstr[3];
++		fhdr[4] = (fr->fr_raw_size >> 24) & 0xff;
++		fhdr[5] = (fr->fr_raw_size >> 16) & 0xff;
++		fhdr[6] = (fr->fr_raw_size >> 8) & 0xff;
++		fhdr[7] = fr->fr_raw_size & 0xff;
++		fhdr[8] = (fr->fr_flags >> 8) & 0xff;
++		fhdr[9] = fr->fr_flags & 0xff;
+ 
+ 		if (safe_write(fd, fhdr, sizeof(fhdr)) == -1)
+ 			return -1;
+ 
+-		if (safe_write(fd, fr->fr_data, fr->fr_size) == -1)
++		if (safe_write(fd, fr->fr_raw_data, fr->fr_raw_size) == -1)
+ 			return -1;
+ 	}
+ 	return 0;
+ }
++
++ 
++/*
++ * Function id3_write_tag_file(id3, filename)
++ *
++ *   Write the ID3 tag to the file indicated by filename. Takes care of enlarging
++ *   the file, if needed. Returns 0 upon success, or -1 if an error occured.
++ *
++ */
++int id3_write_tag_filename(struct id3_tag *id3, const char* filename)
++{
++    struct id3_tag *current_id3; 
++    int fd;
++    int current_totalsize, new_totalsize;
++    GList* node;
++    
++    fd = open(filename, O_RDWR);
++    if (fd == -1)
++       return -1;
++      
++    /*
++     * Figure out how large the current tag is.
++     */
++    current_id3 = id3_open_fd(fd, 0);
++    if (current_id3 != NULL)
++    {
++       /* We use MAX to make sure an erroneous tag doesn't confuse us */
++       current_totalsize = MAX(current_id3->id3_totalsize, 0);
++       id3_close(current_id3);
++    }
++    else
++    {
++       current_totalsize = 0;
++    }
++    
++    /*
++     * Figure out how large the new tag will be.
++     */
++    new_totalsize = 10;
++    node = id3->id3_frame;
++    while (node != NULL)
++    {
++	struct id3_frame* fr = node->data;
++	
++	{
++		char* text = id3_get_text(fr);
++		if (text != NULL)
++		{
++			int len = strlen(text);
++			g_free(text);
++			
++			if (len == 0)
++			{
++				/* We skip over frames with empty text */
++				node = node->next;
++				id3_delete_frame(fr);
++				continue;
++			}
++		}
++	}
++	
++	{
++		char* url  = id3_get_url(fr);
++		if (url != NULL)
++		{
++			int len = strlen(url);
++			g_free(url);
++			
++			if (len == 0)
++			{
++				/* We skip over frames with empty URLs */
++				node = node->next;
++				id3_delete_frame(fr);
++				continue;
++			}
++		}
++	}
++	
++	new_totalsize += fr->fr_raw_size + ID3_FRAMEHDR_SIZE;
++	node = node->next;
++    }
++    new_totalsize += 0; /* no extended header, no footer, no padding */
++    id3->id3_flags = 0;
++    
++    /*
++     * Determine whether we need to rewrite the file to make place for the new tag.
++     */
++    if (new_totalsize > current_totalsize)
++    {
++       struct stat stat_buf;
++       int grow_size;
++
++       stat(filename, &stat_buf); 
++       grow_size = new_totalsize - current_totalsize;
++       ftruncate(fd, stat_buf.st_size + grow_size);
++       
++       /* truncate adds "sparse" zeros; we'll turn them into real ones,
++          which occupy space on disk, to make sure we actually have
++          the disk space before we start enlarging the file */
++       {
++          int remaining = grow_size;
++          char buf[1024] = { 0 };
++          lseek(fd, stat_buf.st_size, SEEK_SET);
++          while (remaining > 0)
++          {
++             int ret = write(fd, buf, MIN(sizeof(buf), remaining));
++             if (ret >= 0)
++                remaining -= ret;
++             else
++             {
++                id3_error(id3, "Unable to enlarge file for the new tag");
++                ftruncate(fd, stat_buf.st_size);
++                close(fd);
++                return -1;
++             }
++          }
++       }
++       
++       /* and now, re-position all the data grow_size bytes forward */
++       {
++          int area_to_move_size = stat_buf.st_size - current_totalsize;
++          int read_pos, write_pos;
++          size_t read_size, read_size_desired;
++          char buf[4096];
++
++          /* TODO: Add error handling to IO operations */
++          
++          /* We reposition the data by going backwards, each time reading
++             a block and copying it forward. That way, we never write
++             over a block which we intend to read later. */
++          write_pos = lseek(fd, 0, SEEK_END);
++          read_pos = write_pos - grow_size;
++
++          /* While we still have bytes to move... */
++          while(area_to_move_size > 0)
++          {
++             /* Get 1 block or the remaining bytes -- the smallest of the two */
++             read_size_desired = MIN(area_to_move_size, sizeof(buf));
++             read_pos -= read_size_desired;
++             lseek(fd, read_pos, SEEK_SET);
++             read_size = read(fd, buf, read_size_desired);
++             
++             /* Write whatever block we've got */
++             write_pos -= read_size;
++             lseek(fd, write_pos, SEEK_SET);
++             write(fd, buf, read_size);
++             
++             area_to_move_size -= read_size;
++          }
++       }
++    }
++    else
++    {
++       new_totalsize = current_totalsize;
++    }
++    
++    id3->id3_size = new_totalsize - 10;
++    
++    /* Zero-out the ID3v2 tag area */
++    {
++       char buf[1024] = {0};
++       size_t remaining;
++       
++       lseek(fd, 0, SEEK_SET);
++       for(remaining = new_totalsize; remaining > 0; remaining -= MIN(remaining,sizeof(buf)))
++       {
++          write(fd, buf, MIN(remaining,sizeof(buf)));
++       }
++    }
++
++    /* Write the new tag */
++    lseek(fd, 0, SEEK_SET);
++    if (id3_write_tag(id3, fd) == -1)
++    {
++       close(fd);
++       return -1;
++    }
++    
++    close(fd);
++    return 0;
++}
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_frame.c xmms-1.2.11-new/Input/mpg123/id3_frame.c
+--- xmms-1.2.11/Input/mpg123/id3_frame.c	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3_frame.c	2007-11-24 23:58:41.000000000 +0100
+@@ -283,7 +283,7 @@
+ 	 */
+ 	if (!((buf[0] >= '0' && buf[0] <= '9') || (buf[0] >= 'A' && buf[0] <= 'Z')))
+ 	{
+-		id3->id3_seek(id3, id3->id3_tagsize - id3->id3_pos);
++		id3->id3_seek(id3, id3->id3_totalsize - id3->id3_pos);
+ 		return 0;
+ 	}
+ 	id = ID3_FRAME_ID(buf[0], buf[1], buf[2], buf[3]);
+@@ -308,7 +308,7 @@
+ 	 */
+ 
+ 	frame->fr_desc = find_frame_description(id);
+-
++	
+ 	/*
+ 	 * Check if frame had a valid id.
+ 	 */
+@@ -385,6 +385,29 @@
+ }
+ 
+ /*
++ * Function id3_get_or_add_frame (id3, type)
++ *
++ *    Search in the list of frames for the ID3-tag, and return the first frame
++ *    of the indicated type.  If no frame of the indicated type exists yet,
++ *    it will add one and return it.
++ *
++ */
++struct id3_frame *id3_get_or_add_frame(struct id3_tag *id3, guint32 type)
++{
++	struct id3_frame* fr;
++	
++	fr = id3_get_frame(id3, type, 1);
++	if (fr != NULL)
++	{
++		return fr;
++	}
++	else
++	{
++		return id3_add_frame(id3, type);
++	}
++}
++
++/*
+  * Function decompress_frame(frame)
+  *
+  *    Uncompress the indicated frame.  Return 0 upon success, or -1 if
+@@ -517,27 +540,26 @@
+  */
+ int id3_delete_frame(struct id3_frame *frame)
+ {
+-	GList *list = frame->fr_owner->id3_frame;
++	struct id3_tag* id3 = frame->fr_owner;
++	GList *list = id3->id3_frame;
+ 	int ret;
+ 
+ 	/*
+ 	 * Search for frame in list.
+ 	 */
+-	if (g_list_find(list, frame) != NULL)
+-	{
+-		/*
+-		 * Frame does not exist in frame list.
+-		 */
+-		ret = -1;
+-	}
+-	else
+-	{
++	if (g_list_find(list, frame) != NULL) {
+ 		/*
+ 		 * Remove frame from frame list.
+ 		 */
+ 		list = g_list_remove(list, frame);
+-		frame->fr_owner->id3_altered = 1;
+-		ret = 0;
++	 	id3->id3_frame = list;
++		id3->id3_altered = 1;
++  	ret = 0;
++	} else {
++		/*
++		 * Frame does not exist in frame list.
++		 */
++		ret = -1;
+ 	}
+ 
+ 	/*
+@@ -704,7 +726,7 @@
+ 	 */
+ 	if (!((buf[0] >= '0' && buf[0] <= '9') || (buf[0] >= 'A' && buf[0] <= 'Z')))
+ 	{
+-		id3->id3_seek(id3, id3->id3_tagsize - id3->id3_pos);
++		id3->id3_seek(id3, id3->id3_size - id3->id3_pos);
+ 		return 0;
+ 	}
+ 
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_frame_text.c xmms-1.2.11-new/Input/mpg123/id3_frame_text.c
+--- xmms-1.2.11/Input/mpg123/id3_frame_text.c	2007-11-24 23:58:20.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/id3_frame_text.c	2007-11-24 23:58:41.000000000 +0100
+@@ -155,6 +155,11 @@
+ char *id3_get_text(struct id3_frame *frame)
+ {
+ 	int offset = 0;
++
++	/* Do we even have data for this frame */
++	if (!frame->fr_data) 
++		return NULL;
++
+ 	/* Type check */
+ 	if (frame->fr_desc->fd_idstr[0] != 'T')
+ 		return NULL;
+@@ -374,3 +379,54 @@
+ 	return id3_string_decode(ID3_TEXT_FRAME_ENCODING(frame),
+ 				 ID3_TEXT_FRAME_PTR(frame) + offset);
+ }
++
++/*
++ * Function id3_set_comment (frame, text)
++ *
++ *    Set text for the indicated frame.  Return 0 upon
++ *    success, or -1 if an error occured.
++ *
++ */
++int id3_set_comment(struct id3_frame *frame, char *text)
++{
++	int *intp;
++
++	/* Type check */
++	if (frame->fr_desc->fd_id != ID3_COMM)
++		return -1;
++
++	/*
++	 * Release memory occupied by previous data.
++	 */
++	id3_frame_clear_data(frame);
++
++	/*
++	 * Allocate memory for new data.
++	 */
++	frame->fr_raw_size = 13 + strlen(text);
++	frame->fr_raw_data = g_malloc(frame->fr_raw_size + 1); /* <encode>XXXComments\0<comment><\0>
++
++	/* Save time... we just need to zero out the start, not the whole
++	 * block, so don't waste time with a calloc()
++	 */
++
++	((guint8 *)frame->fr_raw_data)[0] = ID3_ENCODING_ISO_8859_1;
++	((guint8 *)frame->fr_raw_data)[1] = 0x58;
++	((guint8 *)frame->fr_raw_data)[2] = 0x58;
++	((guint8 *)frame->fr_raw_data)[3] = 0x58;
++
++	memcpy((char *) frame->fr_raw_data + 4, "Comments", 9);
++
++	/*
++	 * Copy contents.
++	 */
++	memcpy((char *) frame->fr_raw_data + 13, text, strlen(text) + 1);
++
++	frame->fr_altered = 1;
++	frame->fr_owner->id3_altered = 1;
++
++	frame->fr_data = frame->fr_raw_data;
++	frame->fr_size = frame->fr_raw_size;
++
++	return 0;
++}
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_frame_url.c xmms-1.2.11-new/Input/mpg123/id3_frame_url.c
+--- xmms-1.2.11/Input/mpg123/id3_frame_url.c	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3_frame_url.c	2007-11-24 23:58:41.000000000 +0100
+@@ -34,6 +34,11 @@
+ char *id3_get_url(struct id3_frame *frame)
+ {
+ 	int offset = 0;
++
++	/* Do we even have data for this frame */
++	if (!frame->fr_data)
++		return NULL;
++
+ 	/* Type check */
+ 	if (frame->fr_desc->fd_idstr[0] != 'W')
+ 		return NULL;
+@@ -80,3 +85,32 @@
+ 	return id3_string_decode(ID3_TEXT_FRAME_ENCODING(frame),
+ 				 ID3_TEXT_FRAME_PTR(frame));
+ }
++
++/*
++ * Function id3_set_url (frame)
++ *
++ *    Sets URL of frame.
++ *
++ */
++void id3_set_url(struct id3_frame *frame, const char* url)
++{
++	/* Type check */
++	if ( frame->fr_desc->fd_idstr[0] != 'W' )
++		return;
++
++	/* Check if frame is compressed */
++	if (id3_decompress_frame(frame) == -1)
++		return;
++
++	/*
++	 * Allocate memory for new data.
++	 */
++	frame->fr_raw_size = strlen(url) + 1;
++	frame->fr_raw_data = g_malloc(frame->fr_raw_size + 1);
++
++	/*
++	 * Copy contents.
++	 */
++	*(gint8 *) frame->fr_raw_data = ID3_ENCODING_ISO_8859_1;
++	memcpy((char *) frame->fr_raw_data + 1, url, frame->fr_raw_size);
++}
+diff -dPNur xmms-1.2.11/Input/mpg123/id3.h xmms-1.2.11-new/Input/mpg123/id3.h
+--- xmms-1.2.11/Input/mpg123/id3.h	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3.h	2007-11-24 23:58:41.000000000 +0100
+@@ -22,6 +22,7 @@
+ #define ID3_H
+ 
+ #include <glib.h>
++#include <string.h>
+ 
+ /*
+  * Option flags to id3_open_*().
+@@ -49,8 +50,9 @@
+ 
+ 	int id3_version;	/* Major ID3 version number */
+ 	int id3_revision;	/* ID3 revision number */
++	int id3_size;		/* Size of ID3 tag (as dictated by header) */
+ 
+-	int id3_tagsize;	/* Total size of ID3 tag */
++	int id3_totalsize;	/* Total size of ID3 tag (including header, footer and padding) */
+ 	int id3_pos;		/* Current position within tag */
+     
+ 	char *id3_error_msg;	/* Last error message */
+@@ -140,8 +142,6 @@
+ #define ID3_ENCODING_UTF16BE	0x02
+ #define ID3_ENCODING_UTF8	0x03
+ 
+-
+-
+ /*
+  * ID3 frame id numbers.
+  */
+@@ -322,50 +322,51 @@
+  */
+ 
+ /* From id3.c */
+-struct id3_tag *id3_open_mem(void *, int);
+-struct id3_tag *id3_open_fd(int, int);
+-struct id3_tag *id3_open_fp(FILE *, int);
+-int id3_set_output(struct id3_tag *, char *);
+-int id3_close(struct id3_tag *);
+-int id3_tell(struct id3_tag *);
+-int id3_alter_file(struct id3_tag *);
+-int id3_write_tag(struct id3_tag *, int);
++struct id3_tag *id3_new();
++struct id3_tag *id3_open_mem(void *ptr, int flags);
++struct id3_tag *id3_open_fd(int fd, int flags);
++struct id3_tag *id3_open_fp(FILE *fp, int flags);
++int id3_close(struct id3_tag *id3);
++int id3_tell(struct id3_tag *id3);
++int id3_alter_file(struct id3_tag *id3);
++int id3_write_tag(struct id3_tag *id3, int fd);
++int id3_write_tag_filename(struct id3_tag *id3, const char* filename);
++int id3_remove_tag_filename(const char* filename);
+ 
+ /* From id3_frame.c */
+ int id3_read_frame(struct id3_tag *id3);
+-struct id3_frame *id3_get_frame(struct id3_tag *, guint32, int);
++struct id3_frame *id3_get_frame(struct id3_tag *id3, guint32 type, int num);
+ int id3_delete_frame(struct id3_frame *frame);
+-struct id3_frame *id3_add_frame(struct id3_tag *, guint32);
+-int id3_decompress_frame(struct id3_frame *);
+-void id3_destroy_frames(struct id3_tag *id);
++struct id3_frame *id3_add_frame(struct id3_tag *id3, guint32 type);
++struct id3_frame *id3_get_or_add_frame(struct id3_tag *id3, guint32 type);
++int id3_decompress_frame(struct id3_frame *frame);
++void id3_destroy_frames(struct id3_tag *id3);
+ void id3_frame_clear_data(struct id3_frame *frame);
+ 
+ /* From id3_frame_text.c */
+ guint id3_string_size(guint8 encoding, const char* text);
+ char* id3_string_decode(guint8 encoding, const char* text);
+-gint8 id3_get_encoding(struct id3_frame *);
+-int id3_set_encoding(struct id3_frame *, gint8);
+-char *id3_get_text(struct id3_frame *);
+-char *id3_get_comment(struct id3_frame *);
+-char *id3_get_text_desc(struct id3_frame *);
+-int id3_get_text_number(struct id3_frame *);
+-int id3_set_text(struct id3_frame *, char *);
+-int id3_set_text_number(struct id3_frame *, int);
++gint8 id3_get_encoding(struct id3_frame *frame);
++int id3_set_encoding(struct id3_frame *frame, gint8 encoding);
++char *id3_get_text(struct id3_frame *frame);
++char *id3_get_comment(struct id3_frame *frame);
++char *id3_get_text_desc(struct id3_frame *frame);
++int id3_get_text_number(struct id3_frame *frame);
++int id3_set_text(struct id3_frame *frame, char *text);
++int id3_set_comment(struct id3_frame *frame, char *comment);
++int id3_set_text_number(struct id3_frame *frame, int number);
+ gboolean id3_frame_is_text(struct id3_frame *frame);
+ 
+ /* From id3_frame_content.c */
+-char *id3_get_content(struct id3_frame *);
++char *id3_get_content(struct id3_frame *frame);
+ 
+ /* From id3_frame_url.c */
+-char *id3_get_url(struct id3_frame *);
+-char *id3_get_url_desc(struct id3_frame *);
++char *id3_get_url(struct id3_frame *frame);
++char *id3_get_url_desc(struct id3_frame *frame);
++void id3_set_url(struct id3_frame *frame, const char* url);
+ 
+ /* From id3_tag.c */
+ void id3_init_tag(struct id3_tag *id3);
+ int id3_read_tag(struct id3_tag *id3);
+ 
+-char *convert_from_utf16(const unsigned char *utf16);
+-char *convert_from_utf16be(const unsigned char *utf16);
+-
+-
+ #endif /* ID3_H */
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_header.h xmms-1.2.11-new/Input/mpg123/id3_header.h
+--- xmms-1.2.11/Input/mpg123/id3_header.h	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3_header.h	2007-11-24 23:58:41.000000000 +0100
+@@ -39,22 +39,21 @@
+ #define ID3_THFLAG_USYNC	0x80
+ #define ID3_THFLAG_EXT		0x40
+ #define ID3_THFLAG_EXP		0x20
++#define ID3_THFLAG_FOOTER	0x10
+ 
+ #define ID3_SET_SIZE28(size, a, b, c, d)	\
+-do {						\
+-	a = (size >> (24 + 3)) & 0x7f;		\
+-	b = (size >> (16 + 2)) & 0x7f;		\
+-	c = (size >> ( 8 + 1)) & 0x7f;		\
++{						\
++	a = (size >> (24 - 3)) & 0x7f;	\
++	b = (size >> (16 - 2)) & 0x7f;	\
++	c = (size >> ( 8 - 1)) & 0x7f;	\
+ 	d = size & 0x7f;			\
+-} while (0)
++}
+ 
+ #define ID3_GET_SIZE28(a, b, c, d)		\
+-(((a & 0x7f) << (24 - 3)) |			\
+- ((b & 0x7f) << (16 - 2)) |			\
+- ((c & 0x7f) << ( 8 - 1)) |			\
+- ((d & 0x7f)))
+-
+-
++	(((a & 0x7f) << (24 - 3)) |		\
++	 ((b & 0x7f) << (16 - 2)) |		\
++	 ((c & 0x7f) << ( 8 - 1)) |		\
++	 ((d & 0x7f)))				\
+ 
+ /*
+  * Layout for the extended header.
+diff -dPNur xmms-1.2.11/Input/mpg123/id3_tag.c xmms-1.2.11-new/Input/mpg123/id3_tag.c
+--- xmms-1.2.11/Input/mpg123/id3_tag.c	2005-05-21 20:05:56.000000000 +0200
++++ xmms-1.2.11-new/Input/mpg123/id3_tag.c	2007-11-24 23:58:41.000000000 +0100
+@@ -39,7 +39,8 @@
+ 	id3->id3_version = 3;
+ 	id3->id3_revision = 0;
+ 	id3->id3_flags = ID3_THFLAG_USYNC | ID3_THFLAG_EXP;
+-	id3->id3_tagsize = 0;
++	id3->id3_size = 0;
++	id3->id3_totalsize = 0;
+ 
+ 	id3->id3_altered = 1;
+ 	id3->id3_newtag = 1;
+@@ -63,13 +64,14 @@
+ int id3_read_tag(struct id3_tag *id3)
+ {
+ 	char *buf;
++	guint8 padding;
+ 	
+ 	/*
+ 	 * We know that the tag will be at least this big.
+ 	 *
+ 	 * tag header + "ID3"
+ 	 */
+-	id3->id3_tagsize = ID3_TAGHDR_SIZE + 3;
++	id3->id3_totalsize = ID3_TAGHDR_SIZE + 3;
+ 	
+ 	if (!(id3->id3_oflags & ID3_OPENF_NOCHK))
+ 	{
+@@ -100,9 +102,11 @@
+ 	id3->id3_version = buf[0];
+ 	id3->id3_revision = buf[1];
+ 	id3->id3_flags = buf[2];
+-	id3->id3_tagsize = ID3_GET_SIZE28(buf[3], buf[4], buf[5], buf[6]);
++	id3->id3_size = ID3_GET_SIZE28(buf[3], buf[4], buf[5], buf[6]);
++	id3->id3_totalsize += id3->id3_size;
++	if (id3->id3_flags & ID3_THFLAG_FOOTER)
++		id3->id3_totalsize += 10;
+ 	id3->id3_newtag = 0;
+-	id3->id3_pos = 0;
+ 	
+ 	if (id3->id3_version < 2 || id3->id3_version > 4)
+ 		return -1;
+@@ -120,14 +124,34 @@
+ 	/*
+ 	 * Parse frames.
+ 	 */
+-	while (id3->id3_pos < id3->id3_tagsize)
++	while (id3->id3_pos < id3->id3_size)
+ 	{
+ 		if (id3_read_frame(id3) == -1)
+ 			return -1;
+ 	}
+ 
+-	if (id3->id3_frame == NULL)
+-		return -1;
++	/*
++	 * Like id3lib, we try to find unstandard padding (not within
++	 * the tag size). This is important to know when we strip
++	 * the tag or replace it.
++	 * Another option might be looking for an MPEG sync, but we don't do it.
++	 */
++
++	id3->id3_seek(id3, id3->id3_totalsize - id3->id3_pos);
++	
++	/* Temporarily increase totalsize, to try reading beyong the boundary */
++	++id3->id3_totalsize;
++	
++	while (id3->id3_read(id3, &padding, sizeof(padding)) != NULL)
++	{
++		if (padding == 0)
++			++id3->id3_totalsize;
++		else
++			break;
++	}
++	
++	/* Decrease totalsize after we temporarily increased it */
++	--id3->id3_totalsize;
+ 	
+ 	return 0;
+ }
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.c xmms-1.2.11-new/Input/mpg123/mpg123.c
+--- xmms-1.2.11/Input/mpg123/mpg123.c	2007-11-24 23:58:20.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.c	2007-11-24 23:58:41.000000000 +0100
+@@ -129,9 +129,9 @@
+ 
+ #ifdef USE_SIMD
+ 	fr->dct36 = funcs_dct36[0];
+-   
++
+ 	if (CPU_HAS_3DNOW() && !p8 &&
+-	    (mpg123_cfg.default_synth == SYNTH_3DNOW || 
++	    (mpg123_cfg.default_synth == SYNTH_3DNOW ||
+ 	     mpg123_cfg.default_synth == SYNTH_AUTO))
+ 	{
+ 		fr->synth = funcs[3][ds]; /* 3DNow! optimized synth_1to1() */
+@@ -320,11 +320,11 @@
+ 	if (!strncasecmp(filename, "http://", 7))
+ 	{			/* We assume all http:// (except those ending in .ogg) are mpeg -- why do we do that? */
+ 		ext = strrchr(filename, '.');
+-		if (ext) 
++		if (ext)
+ 		{
+-			if (!strncasecmp(ext, ".ogg", 4)) 
++			if (!strncasecmp(ext, ".ogg", 4))
+ 				return FALSE;
+-			if (!strncasecmp(ext, ".rm", 3) || 
++			if (!strncasecmp(ext, ".rm", 3) ||
+ 			    !strncasecmp(ext, ".ra", 3)  ||
+ 			    !strncasecmp(ext, ".rpm", 4)  ||
+ 			    !strncasecmp(ext, ".fla", 4)  ||
+@@ -534,7 +534,7 @@
+  * Function mpg123_get_id3v2 (id3d, tag)
+  *
+  *    Get desired contents from the indicated id3tag and store it in
+- *    `tag'. 
++ *    `tag'.
+  *
+  */
+ struct id3v2tag_t* mpg123_id3v2_get(struct id3_tag *id3d)
+@@ -550,6 +550,10 @@
+ 	tag->track_number = id3v2_get_num(id3d, ID3_TRCK);
+ 	tag->comment = id3v2_get_text(id3d, ID3_COMM);
+ 	tag->genre = id3v2_get_text(id3d, ID3_TCON);
++	tag->composer = id3v2_get_text(id3d, ID3_TCOM);
++	tag->orig_artist = id3v2_get_text(id3d, ID3_TOPE);
++	tag->url = id3v2_get_text(id3d, ID3_WCOM);
++	tag->encoded_by = id3v2_get_text(id3d, ID3_TENC);
+ 
+ 	return tag;
+ }
+@@ -829,7 +833,7 @@
+ static int mpg123_seek(struct frame *fr, xing_header_t *xh, gboolean vbr, int time)
+ {
+ 	int jumped = -1;
+-	
++
+ 	if (xh)
+ 	{
+ 		int percent = ((double) time * 100.0) /
+@@ -995,7 +999,7 @@
+ 							mpg123_info->output_audio = FALSE;
+ 							continue;
+ 						}
+-						
++
+ 					}
+ 				}
+ 				if(mpg123_freqs[fr.sampling_frequency] != mpg123_frequency || mpg123_stereo != fr.stereo)
+@@ -1033,12 +1037,12 @@
+ 							mpg123_info->output_audio = FALSE;
+ 							continue;
+ 						}
+-					}					
++					}
+ 				}
+-				
++
+ 				if (tabsel_123[fr.lsf][fr.lay - 1][fr.bitrate_index] != mpg123_bitrate)
+ 					mpg123_bitrate = tabsel_123[fr.lsf][fr.lay - 1][fr.bitrate_index];
+-				
++
+ 				if (!disp_count)
+ 				{
+ 					disp_count = 20;
+@@ -1154,7 +1158,7 @@
+ 
+ 	if (aboutbox != NULL)
+ 		return;
+-	
++
+ 	aboutbox = xmms_show_message(
+ 		_("About MPEG Layer 1/2/3 plugin"),
+ 		_("mpg123 decoding engine by Michael Hipp <mh@mpg123.de>\n"
+diff -dPNur xmms-1.2.11/Input/mpg123/mpg123.h xmms-1.2.11-new/Input/mpg123/mpg123.h
+--- xmms-1.2.11/Input/mpg123/mpg123.h	2007-11-24 23:58:20.000000000 +0100
++++ xmms-1.2.11-new/Input/mpg123/mpg123.h	2007-11-24 23:58:41.000000000 +0100
+@@ -1,5 +1,5 @@
+ /*
+- * mpg123 defines 
++ * mpg123 defines
+  * used source: musicout.h from mpegaudio package
+  */
+ 
+@@ -79,6 +79,10 @@
+ 	char *album;
+ 	char *comment;
+ 	char *genre;
++	char *composer;
++	char *orig_artist;
++	char *url;
++	char *encoded_by;
+ 	int year;
+ 	int track_number;
+ };
+@@ -300,7 +304,6 @@
+ int mpg123_decode_header(struct frame *fr, unsigned long newhead);
+ double mpg123_compute_bpf(struct frame *fr);
+ double mpg123_compute_tpf(struct frame *fr);
+-guint mpg123_strip_spaces(char *src, size_t n);
+ struct id3v2tag_t* mpg123_id3v2_get(struct id3_tag *id3d);
+ void mpg123_id3v2_destroy(struct id3v2tag_t* tag);
+ char *mpg123_format_song_title(struct id3v2tag_t *tag, char *filename);

@@ -1,0 +1,78 @@
+diff -dPNur xmms-1.2.11/Input/vorbis/fileinfo.c xmms-1.2.11-new/Input/vorbis/fileinfo.c
+--- xmms-1.2.11/Input/vorbis/fileinfo.c	2007-11-25 01:23:31.000000000 +0100
++++ xmms-1.2.11-new/Input/vorbis/fileinfo.c	2007-11-25 01:24:01.000000000 +0100
+@@ -39,6 +39,9 @@
+ #include "libxmms/charset.h"
+ #include <xmms/i18n.h>
+ 
++#include "../../xmms/xmms.h"
++#include <gdk/gdkkeysyms.h>
++
+ #include "vorbis.h"
+ #include "vcedit.h"
+ 
+@@ -444,6 +447,28 @@
+ }
+ 
+ /***********************************************************************/
++static int restore_focus;
++
++gboolean vorbis_keypress_cb(GtkWidget * w, GdkEventKey * event, gpointer save) {
++    switch(event->keyval) {
++	case GDK_Return:
++	    restore_focus=1;	    
++	    gtk_signal_emit_by_name(GTK_OBJECT(save), "clicked", NULL);
++	break;
++	case GDK_Escape:
++	    restore_focus=1;	    
++	break;
++    }
++    return TRUE;
++}
++
++void gtk_widget_destroyed_focus(GtkWidget *widget, GtkWidget **widget_pointer) {
++    gtk_widget_destroyed(widget,widget_pointer);    
++    if (restore_focus) {
++	gtk_widget_hide(playlistwin);
++	gtk_widget_show(playlistwin);
++    }
++}
+ 
+ void vorbis_file_info_box(char *fn)
+ {
+@@ -465,6 +490,8 @@
+ 
+ 	g_free(vte.filename);
+ 	vte.filename = g_strdup(fn);
++
++  	restore_focus = 0;
+ 	
+ 	if (!window)
+ 	{
+@@ -472,11 +499,12 @@
+ 		GtkWidget *hbox, *label, *filename_hbox, *vbox, *left_vbox;
+ 		GtkWidget *table, *bbox, *cancel_button;
+ 		GtkWidget *save_button, *remove_button;
++  		GtkAccelGroup *ag;
+ 
+ 		window = gtk_window_new(GTK_WINDOW_DIALOG);
+ 		gtk_window_set_policy(GTK_WINDOW(window), FALSE, FALSE, FALSE);
+ 		gtk_signal_connect(GTK_OBJECT(window), "destroy", 
+-			GTK_SIGNAL_FUNC(gtk_widget_destroyed), &window);
++  			GTK_SIGNAL_FUNC(gtk_widget_destroyed_focus), &window);
+ 		gtk_signal_connect(GTK_OBJECT(window), "key_press_event",
+ 				   keypress_cb, NULL);
+ 		gtk_container_set_border_width(GTK_CONTAINER(window), 10);
+@@ -809,6 +837,12 @@
+ 				   FALSE, 0);
+ 		
+ 		gtk_widget_show_all(window);
++
++		ag = gtk_accel_group_new();
++		gtk_accel_group_add(ag, GDK_Escape, 0, 0, GTK_OBJECT(cancel_button), "clicked");
++		gtk_accel_group_add(ag, GDK_Return, 0, 0, GTK_OBJECT(save_button), "clicked");
++		gtk_window_add_accel_group(GTK_WINDOW(window), ag);
++    		gtk_signal_connect(GTK_OBJECT(window),"key_press_event",GTK_SIGNAL_FUNC(vorbis_keypress_cb),save_button);
+ 	} else
+ 		gdk_window_raise(window->window);
+ 

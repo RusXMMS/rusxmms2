@@ -1,0 +1,3 @@
+problems with building of libid3 complaining due to id3_frametype_* undefined are due to
+ - missing gperf and as a result empty frametype.c and compat.c generated
+ - gperf should be installed and empty frametype.c, compat.c deleted

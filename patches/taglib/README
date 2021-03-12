@@ -1,0 +1,36 @@
+taglib-*-ds-rusxmms-enforce.patch will prevent applications from 
+overloading taglib ID3 v.1 parser/renderer. For instance, kid3
+has it's onw recoder and bypasses RusXMMS unless this patch is
+applied.
+
+If you want to set unicode ID3v.2 titles, please, set in the
+LibRCC configuration (xmms.xml) "id3v2" class to point appropriate 
+unicode encoding.
+
+1. Some Info Encoding Handling
+1.1 Reading encodings
+    - Unicode ID3 v.2 tags are read as defined by ID3V2 tag, no RusXMMS
+    is envolved.
+    - Latin1 ID3 v.2 and ID3 v.1 tags are read using RusXMMS library.
+    The 'id3' and 'id3v2' classes are used corespondingly.
+1.2 Writing ID3 v.1 encodings
+    - ID3 v.1 tag is written using RusXMMS library. The 'id3' class
+    selects output encoding.
+1.3 Writting ID3 v.2 encodings
+    - ID3 v.2 tag output encodings is selected with help of 'id3v2' class of 
+    RusXMMS. 
+    - If unicode encoding is set (UTF-8, UTF-16, UTF-16BE, UTF-16LE)
+    the tag is written using selected encoding (independent of original one).
+    - Otherwise, original unicode encodings are kept.
+    - If original encoding is also non-unicode, than the tag is stored
+    in 'id3v2' class encoding. However, it is really a bad idea! Set an
+    unicode encoding.
+2. Recomended class settings
+    - id3 = CP1251
+    - id3v2 = UTF-16
+3. Notes
+    - TagLib supports UTF-16LE encodings within ID3 v.2 tags (described by
+    number 4). The UTF-16LE is not part of standard and probably added for
+    compatibility with some nasty Windows applications. RusXMMS will not 
+    allow to write tags in UTF-16LE.
+    
