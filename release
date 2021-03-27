@@ -1,0 +1,38 @@
+#! /bin/bash
+
+RDIR=~/releases
+NAME=RusXMMS2
+
+if [ ! -d $RDIR ]; then
+    if [ -a $RDIR ]; then
+	echo "Release directory isn't a directory!"
+	exit
+    fi
+    mkdir -p $RDIR
+fi
+
+version=$(cat VERSION)
+rname="$NAME-$version";
+
+if [ -d $RDIR/$rname ]; then
+    rm -rf $RDIR/$rname
+fi
+mkdir -p $RDIR/$rname
+if [ ! -d $RDIR/$rname ]; then
+    echo "Can't create directory!!!"
+    exit
+fi
+cp -a * $RDIR/$rname
+
+(
+    cd $RDIR
+
+    if [ -a $rname.tar.bz2 ]; then
+	rm -f $rname.tar.bz2
+    fi
+    tar cjf $rname.tar.bz2 $rname
+    rm -rf $rname
+
+    scp $rname.tar.bz2 csa@darksoft.org:/home/csa/public_html/files/rusxmms/
+    ssh csa@darksoft.org ln -sf $rname.tar.bz2 /home/csa/public_html/files/rusxmms/$NAME-latest.tar.bz2
+)

@@ -1,10 +1,10 @@
 Prerequisites
 -------------
-    The patched XMMS can be compiled without any additional dependency,
+    The patched applications can be compiled without additional dependency,
     but to get recoding on you will need LibRCC (http://rusxmms.sf.net).
-    The LibRCC (Russian Charset Conversion Library) supports several
-    ways of encoding autodetection. To get this feature on the LibRCD,
-    Enca, db4 libraries should be installed prior to LibRCC compilation.
+    The LibRCC (RusXMMS Charset Conversion Library) supports several
+    ways of encoding autodetection. This depend on LibRCD, Enca, and DB4 
+    libraries which should be installed prior to LibRCC compilation.
     
     Starting from version 0.2.0 LibRCC supports language autodetection using
     aspell and language translation using libtranslate (the internet connection
@@ -22,65 +22,5 @@ Prerequisites
     To get language translation:
 	7. Libtranslate + Internet Connection
 
-Compilation
------------
-1. Copy RusXMMS into the root of xmms source distribution
-    Run 'apply.sh' to get RusXMMS with ID3v2 enabled mpg123 
-	* Patches from Gentoo XMMS Distribution is used to provide ID3v2
-    Custom: Just apply patches you need 
-	* all files from source/*.[ch] should be copied into the 
-	libxmms directory
-2. Run 'aclocal && automake && autoconf' in the root of XMMS source tree in 
-   order to regenerate Makefiles.
-3. configure, compile and install as usual
-
-Patches
--------
-    xmms-ds-rusxmms:		Base RusXMMS patch (required!)
-    xmms-ds-rusxmms-charset:	UTF16/RCC for libxmms/charset.c. 
-				* Required by Id3v2 tag editor.
-    xmms-ds-playlist:		PlayList Recoding (Save/Load/Display)
-				* Recodes file names from playlist files
-				* Recodes titles from playlist files
-				* Recodes titles from plugins if AutoEngine enabled
-    xmms-ds-shade:		Enables font selection for Shade Windows
-				* After applying the non-English titles will be 
-				displayed correctly in the shade window
-    xmms-ds-textbox:		Corrects UTF-8 displaying in xmms 'TextBox'
-    
-    xmms-ds-mpg123:	Recodes mpg123 titles
-	    editor:	Enables editing of ID3 tags (v.1 and v.2)
-	      keys:	Enables fast keys 
-			Esc, Enter: Cancel, Save and Exit
-			Ctrl+Left, Ctrl+Right: Navigate tabs
-    			Ctrl+PgDn, Ctrl+PgUp: Navigate records
-    xmms-ds-vorbis-*:	The same functionalities for vorbis plugin
-			( No recoding patch is required )
-
-Extra Patches
--------------
-    Some extra functionality, which is not included in default "apply.sh" 
-    scripts and could be considered a bad or/and dangerous idea.
-
-    xmms-ds-mpg123-wrongencoding.patch:
-	The ID3 v.2 defines 4 types of encodings: Latin1, UTF16, UTF16BE, UTF8.
-	Original version of XMMS assumes the tag broken if other encoding is
-	specified. This patch, assumes Latin1 for such encodings.
-
-Minimal Configurations:
-    xmms-ds-rusxmms + xmms-ds-playlist:
-	In the case then the autoengine is available, this solution will
-	give completely recoded playlist window. The recoding of plugins
-	will work as well.
-    xmms-ds-rusxmms + xmms-ds-mpg123(no editor and keys):
-	This solution will give completely recoded playlist even if no
-	autoengine is available, but playlists are unsupported.
-
-Notes
------
-    * Edited ID3 tags and playlists will be saved in the corresponded
-    encodings selected using 'RusXMMS' preference page.
-
-
 Project Page: http://rusxmms.sf.net
-Author: Suren A. Chilingaryan <darksoft@dside.dyndns.org>
+Author: Suren A. Chilingaryan <csa@suren.me>
